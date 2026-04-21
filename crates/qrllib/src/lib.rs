@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 pub mod address;
 pub mod descriptor;
 pub mod dilithium;

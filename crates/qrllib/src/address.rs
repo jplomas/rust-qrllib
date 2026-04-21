@@ -107,4 +107,15 @@ mod tests {
         let body = "z".repeat(ADDRESS_SIZE * 2);
         assert!(!is_valid_address(&format!("Q{body}")));
     }
+
+    #[test]
+    fn is_valid_address_rejects_multibyte_leading_char() {
+        let mut candidate = String::from("é");
+        candidate.push_str(&"0".repeat(1 + ADDRESS_SIZE * 2 - candidate.len()));
+        assert_eq!(candidate.len(), 1 + ADDRESS_SIZE * 2);
+        assert!(
+            !is_valid_address(&candidate),
+            "a correctly-sized string whose first char spans multiple bytes must not validate"
+        );
+    }
 }

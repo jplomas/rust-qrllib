@@ -27,7 +27,9 @@ pub fn verify_sphincsplus_wallet_signature(
     public_key: &[u8],
     descriptor: Descriptor,
 ) -> bool {
-    if !matches!(descriptor.wallet_type(), Ok(WalletType::SphincsPlus256s)) {
+    if !descriptor.is_valid()
+        || !matches!(descriptor.wallet_type(), Ok(WalletType::SphincsPlus256s))
+    {
         return false;
     }
 
@@ -224,6 +226,24 @@ mod tests {
             &wallet.public_key(),
             wallet.descriptor(),
         ));
+        assert!(
+            !verify_sphincsplus_wallet_signature(
+                message,
+                signature,
+                &wallet.public_key(),
+                crate::Descriptor::new([crate::WalletType::MlDsa87.code(), 0, 0]),
+            ),
+            "wrong-type descriptor must not verify"
+        );
+        assert!(
+            !verify_sphincsplus_wallet_signature(
+                message,
+                signature,
+                &wallet.public_key(),
+                crate::Descriptor::new([crate::WalletType::SphincsPlus256s.code(), 0x01, 0x00]),
+            ),
+            "non-canonical SPHINCS+ descriptor must not verify"
+        );
     }
 
     #[test]

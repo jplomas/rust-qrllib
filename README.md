@@ -424,6 +424,8 @@ cargo llvm-cov --locked --package qrllib --summary-only
 cd demo && npm run build
 ```
 
+Run coverage on nightly (`cargo +nightly llvm-cov --locked --package qrllib --summary-only`) to honour `#[cfg_attr(coverage_nightly, coverage(off))]` exclusions on defensive helpers whose guards cannot fire from internal callers (e.g. `constant_time_eq` length-mismatch, the duplicate length guards inside `crypto_sign_open*`). On stable the attribute is a no-op and those branches count against the ceiling.
+
 Additional CI coverage:
 
 - ML-DSA-87 is an in-repo Rust port of the `go-qrllib` implementation, not a wrapper around a packaged ML-DSA crate.

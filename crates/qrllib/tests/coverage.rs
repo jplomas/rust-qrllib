@@ -1,12 +1,13 @@
 use qrllib::{
     ADDRESS_SIZE, DESCRIPTOR_SIZE, DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE,
     DILITHIUM_SECRET_KEY_SIZE, DILITHIUM_SIGNATURE_SIZE, Descriptor, Dilithium, ExtendedSeed,
-    ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed,
-    SphincsPlus256s, SphincsPlus256sWallet, WalletType, bin_to_mnemonic, dilithium_extract_message,
-    dilithium_extract_signature, dilithium_open, extract_message, extract_signature,
-    format_address, get_address, is_valid_address, mnemonic_to_bin, open,
-    sign_dilithium_with_secret_key, validate_dilithium_public_key, validate_dilithium_secret_key,
+    ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
+    ML_DSA_87_SIGNATURE_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, SEED_SIZE,
+    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed, SphincsPlus256s, SphincsPlus256sWallet, WalletType,
+    bin_to_mnemonic, dilithium_extract_message, dilithium_extract_signature, dilithium_open,
+    extract_message, extract_signature, format_address, get_address, is_valid_address,
+    mnemonic_to_bin, open, sign_dilithium_with_secret_key, validate_dilithium_public_key,
+    validate_dilithium_secret_key, validate_mldsa_public_key, validate_mldsa_secret_key,
     verify_dilithium_signature, verify_mldsa87_wallet_signature,
 };
 
@@ -133,6 +134,21 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
     zeroized.zeroize();
     assert!(zeroized.seed().iter().all(|byte| *byte == 0));
     assert!(zeroized.secret_key_bytes().iter().all(|byte| *byte == 0));
+
+    assert!(validate_mldsa_public_key(&imported.public_key_bytes()).is_ok());
+    assert!(validate_mldsa_secret_key(imported.secret_key_bytes().as_slice()).is_ok());
+    assert!(matches!(
+        validate_mldsa_secret_key(&[0_u8; 1]),
+        Err(QrllibError::InvalidMlDsaSecretKeySize(1, ML_DSA_87_SECRET_KEY_SIZE))
+    ));
+    assert!(matches!(
+        validate_mldsa_public_key(&[0_u8; 1]),
+        Err(QrllibError::InvalidPublicKeySize {
+            wallet_type: WalletType::MlDsa87,
+            actual: 1,
+            expected: ML_DSA_87_PUBLIC_KEY_SIZE,
+        })
+    ));
 }
 
 #[test]
