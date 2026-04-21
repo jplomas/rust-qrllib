@@ -1753,9 +1753,6 @@ mod tests {
         )
         .expect("tree");
         tree.zeroize();
-        assert!(matches!(
-            tree.sign(b"after zeroize"),
-            Err(QrllibError::XmssSecretKeyZeroized)
-        ));
+        assert!(matches!(tree.sign(b"after zeroize"), Err(QrllibError::XmssSecretKeyZeroized)));
     }
 }

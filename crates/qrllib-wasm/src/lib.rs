@@ -41,7 +41,10 @@ fn store_wallet(entry: WalletEntry) -> u32 {
     handle
 }
 
-fn with_entry<T>(handle: u32, f: impl FnOnce(&WalletEntry) -> Result<T, JsValue>) -> Result<T, JsValue> {
+fn with_entry<T>(
+    handle: u32,
+    f: impl FnOnce(&WalletEntry) -> Result<T, JsValue>,
+) -> Result<T, JsValue> {
     WALLET_REGISTRY.with(|registry| {
         let guard = registry.borrow();
         let entry = guard.get(&handle).ok_or_else(|| JsValue::from_str("unknown wallet handle"))?;
@@ -55,7 +58,8 @@ fn with_entry_mut<T>(
 ) -> Result<T, JsValue> {
     WALLET_REGISTRY.with(|registry| {
         let mut guard = registry.borrow_mut();
-        let entry = guard.get_mut(&handle).ok_or_else(|| JsValue::from_str("unknown wallet handle"))?;
+        let entry =
+            guard.get_mut(&handle).ok_or_else(|| JsValue::from_str("unknown wallet handle"))?;
         f(entry)
     })
 }
@@ -451,10 +455,7 @@ pub fn create_legacy_xmss_wallet(height: u8, hash_function: String) -> Result<u3
 
 /// Open a legacy XMSS wallet from its extended seed + OTS index and return a handle.
 #[wasm_bindgen]
-pub fn open_legacy_xmss_wallet(
-    extended_seed_hex: String,
-    index: u32,
-) -> Result<u32, JsValue> {
+pub fn open_legacy_xmss_wallet(extended_seed_hex: String, index: u32) -> Result<u32, JsValue> {
     let wallet = xmss_wallet_from_hex_seed(&extended_seed_hex, index)?;
     Ok(store_wallet(WalletEntry::LegacyXmss(wallet)))
 }
@@ -569,11 +570,7 @@ pub fn wallet_sign(handle: u32, message: String) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn close_wallet(handle: u32) -> Result<(), JsValue> {
     let removed = WALLET_REGISTRY.with(|registry| registry.borrow_mut().remove(&handle));
-    if removed.is_some() {
-        Ok(())
-    } else {
-        Err(JsValue::from_str("unknown wallet handle"))
-    }
+    if removed.is_some() { Ok(()) } else { Err(JsValue::from_str("unknown wallet handle")) }
 }
 
 /// Close every registered wallet. Intended for browser-page teardown.
@@ -590,7 +587,7 @@ mod tests {
     //! pure-Rust lifecycle that sits behind every handle-based entry point:
     //! create → store → retrieve → remove → drop.
 
-    use super::{WalletEntry, WALLET_REGISTRY, store_wallet};
+    use super::{WALLET_REGISTRY, WalletEntry, store_wallet};
     use qrllib::{MlDsa87Wallet, Seed};
 
     fn seed(byte: u8) -> Seed {
