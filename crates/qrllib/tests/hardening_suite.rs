@@ -16,8 +16,11 @@ fn mldsa_wallet_sign_randomized_varies_and_verifies() {
     let wallet = MlDsa87Wallet::from_seed(seed).expect("wallet");
     let message = b"wallet randomised smoke";
 
-    let det_a = wallet.sign(message).expect("deterministic a");
-    let det_b = wallet.sign(message).expect("deterministic b");
+    // Post TOB-QRLLIB-6: `sign` is hedged by default; the explicit
+    // deterministic-mode opt-in is `sign_deterministic`. The two
+    // det signs MUST byte-equal; the two hedged signs MUST differ.
+    let det_a = wallet.sign_deterministic(message).expect("deterministic a");
+    let det_b = wallet.sign_deterministic(message).expect("deterministic b");
     assert_eq!(det_a, det_b);
 
     let hedged_a = wallet.sign(message).expect("hedged a");
@@ -86,6 +89,11 @@ fn mldsa_wallet_seal_rejects_zeroized_signer() {
 
 #[test]
 fn sphincs_wallet_sign_rejects_zeroized_signer() {
+    // Bypass the SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) for this
+    // integration test; see `enable_experimental_sphincsplus_issuance_for_testing`
+    // rustdoc for the explanation.
+    qrllib::enable_experimental_sphincsplus_issuance_for_testing();
+
     let seed = Seed::from_bytes(&[41_u8; qrllib::SEED_SIZE]).expect("seed");
     let mut wallet = SphincsPlus256sWallet::from_seed(seed).expect("wallet");
     wallet.zeroize();

@@ -241,7 +241,7 @@ jobs:
       - name: Verify reference signature with rust-qrllib (reverse direction)
         run: |
           echo "=== Reverse: reference signs, rust-qrllib verifies via rfc8391 module ==="
-          cargo run --locked --quiet --example xmss_verify_reverse
+          cargo run --locked --quiet -p qrllib --example xmss_verify_reverse
           echo "✓ reference → rust-qrllib: PASSED"
           echo ""
           echo "Both directions verified."

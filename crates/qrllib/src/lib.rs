@@ -52,7 +52,7 @@ pub use sphincsplus::{
 };
 pub use sphincsplus_wallet::{SphincsPlus256sWallet, verify_sphincsplus_wallet_signature};
 pub use wallet::{MlDsa87Wallet, verify_mldsa87_wallet_signature};
-pub use wallet_type::WalletType;
+pub use wallet_type::{WalletType, enable_experimental_sphincsplus_issuance_for_testing};
 pub use xmss::{
     XMSS_MAX_HEIGHT, XMSS_PUBLIC_KEY_SIZE, XMSS_SECRET_KEY_SIZE, XMSS_SEED_SIZE, XMSS_WOTS_PARAM_K,
     XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_W, Xmss, XmssHashFunction, XmssHeight,

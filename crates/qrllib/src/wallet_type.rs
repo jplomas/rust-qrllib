@@ -1,8 +1,52 @@
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use crate::{
     SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
     error::{QrllibError, Result},
     mldsa::ML_DSA_87_PUBLIC_KEY_SIZE,
 };
+
+/// Process-wide runtime override for the SPHINCS+ issuance gate.
+/// Set by [`enable_experimental_sphincsplus_issuance_for_testing`].
+/// (TOB-QRLLIB-4 — Rust-port mirror of the Go-side
+/// `EnableExperimentalForTesting` helper.)
+static SPHINCSPLUS_ISSUANCE_BYPASS: AtomicBool = AtomicBool::new(false);
+
+/// Enable SPHINCS+/SLH-DSA wallet issuance for the lifetime of the
+/// current process. Intended for **test harnesses, examples, and
+/// developer experimentation** — production code that wants to enable
+/// SPHINCS+ wallets should compile with the
+/// `experimental-sphincsplus-issuance` Cargo feature instead, which
+/// expresses the opt-in at the build-system level rather than via a
+/// process-wide mutable flag.
+///
+/// Cargo integration-tests under `tests/` are compiled as downstream
+/// consumers of `qrllib` — they do **not** inherit qrllib's `cfg(test)`
+/// scope, so the `cfg(any(test, feature = "..."))` gate in
+/// [`WalletType::is_issuable`] sees the test build as a production
+/// build. The intended pattern for those tests is:
+///
+/// ```ignore
+/// use qrllib::enable_experimental_sphincsplus_issuance_for_testing;
+///
+/// #[test]
+/// fn my_sphincs_wallet_test() {
+///     enable_experimental_sphincsplus_issuance_for_testing();
+///     // ... now SphincsPlus256sWallet::generate() etc. work.
+/// }
+/// ```
+///
+/// Once called, the bypass cannot be disabled within the same
+/// process — this is intentional so a misuse cannot accidentally undo
+/// a deliberate enable elsewhere in the process.
+pub fn enable_experimental_sphincsplus_issuance_for_testing() {
+    SPHINCSPLUS_ISSUANCE_BYPASS.store(true, Ordering::Relaxed);
+}
+
+/// Internal probe used by [`WalletType::is_issuable`].
+fn sphincsplus_issuance_bypass_active() -> bool {
+    SPHINCSPLUS_ISSUANCE_BYPASS.load(Ordering::Relaxed)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -39,11 +83,12 @@ impl WalletType {
     ///   (see [`is_verifiable`]).
     ///
     /// [`is_verifiable`]: Self::is_verifiable
-    pub const fn is_issuable(self) -> bool {
+    pub fn is_issuable(self) -> bool {
         match self {
             Self::MlDsa87 => true,
             Self::SphincsPlus256s => {
                 cfg!(any(test, feature = "experimental-sphincsplus-issuance"))
+                    || sphincsplus_issuance_bypass_active()
             }
         }
     }

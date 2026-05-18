@@ -20,9 +20,14 @@ fn pad_array<const N: usize>(input: &[u8]) -> [u8; N] {
 
 #[test]
 fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths() {
+    // This test asserts byte-equality between parallel signs of the
+    // same message — which requires FIPS 204 §3.5 deterministic mode.
+    // Default `sign` is hedged per TOB-QRLLIB-6, so route through the
+    // explicit `sign_deterministic` entry points throughout.
     let dilithium = Arc::new(Dilithium::from_seed([7_u8; 32]));
     let dilithium_message = b"concurrent dilithium verification".to_vec();
-    let dilithium_signature = dilithium.sign(&dilithium_message).expect("dilithium signature");
+    let dilithium_signature =
+        dilithium.sign_deterministic(&dilithium_message).expect("dilithium signature");
     let mut dilithium_sealed = dilithium_signature.to_vec();
     dilithium_sealed.extend_from_slice(&dilithium_message);
     let dilithium_public_key = dilithium.public_key_bytes();
@@ -45,7 +50,7 @@ fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths
                     DILITHIUM_SIGNATURE_SIZE
                 );
                 assert!(dilithium_extract_message(&sealed).is_some());
-                signer.sign(&message).expect("parallel sign")
+                signer.sign_deterministic(&message).expect("parallel sign")
             }));
         }
 
@@ -58,7 +63,8 @@ fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths
     let mldsa = Arc::new(MlDsa87::from_seed([9_u8; 32]));
     let mldsa_context = b"context".to_vec();
     let mldsa_message = b"concurrent mldsa verification".to_vec();
-    let mldsa_signature = mldsa.sign(&mldsa_context, &mldsa_message).expect("mldsa signature");
+    let mldsa_signature =
+        mldsa.sign_deterministic(&mldsa_context, &mldsa_message).expect("mldsa signature");
     let mut mldsa_sealed = mldsa_signature.to_vec();
     mldsa_sealed.extend_from_slice(&mldsa_message);
     let mldsa_public_key = mldsa.public_key_bytes();

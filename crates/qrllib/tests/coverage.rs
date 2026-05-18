@@ -6,9 +6,10 @@ use qrllib::{
     SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed, SphincsPlus256s, SphincsPlus256sWallet, WalletType,
     bin_to_mnemonic, dilithium_extract_message, dilithium_extract_signature, dilithium_open,
     extract_message, extract_signature, format_address, get_address, is_valid_address,
-    mnemonic_to_bin, open, sign_dilithium_with_secret_key, validate_dilithium_public_key,
-    validate_dilithium_secret_key, validate_mldsa_public_key, validate_mldsa_secret_key,
-    verify_dilithium_signature, verify_mldsa87_wallet_signature,
+    enable_experimental_sphincsplus_issuance_for_testing, mnemonic_to_bin, open,
+    sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_deterministic,
+    validate_dilithium_public_key, validate_dilithium_secret_key, validate_mldsa_public_key,
+    validate_mldsa_secret_key, verify_dilithium_signature, verify_mldsa87_wallet_signature,
 };
 
 #[test]
@@ -161,7 +162,10 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     assert!(validate_dilithium_secret_key(imported.secret_key_bytes().as_slice()).is_ok());
 
     let message = b"legacy detached signatures in wasm";
-    let signature = generated.sign(message).expect("signature");
+    // Byte-equality between the detached signature and the free-fn
+    // signature requires deterministic mode; default `sign` is hedged
+    // per TOB-QRLLIB-6.
+    let signature = generated.sign_deterministic(message).expect("signature");
     assert_eq!(signature.len(), DILITHIUM_SIGNATURE_SIZE);
     assert_eq!(
         dilithium_extract_message(&generated.sign_attached(message).expect("sealed")).expect("message"),
@@ -179,8 +183,11 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     assert!(verify_dilithium_signature(message, &signature, &imported.public_key_bytes()));
     assert_eq!(
         signature,
-        sign_dilithium_with_secret_key(message, imported.secret_key_bytes().as_slice())
-            .expect("sign with secret key")
+        sign_dilithium_with_secret_key_deterministic(
+            message,
+            imported.secret_key_bytes().as_slice()
+        )
+        .expect("sign with secret key (deterministic)")
     );
     assert!(Dilithium::from_hex_seed("0x00").is_err());
     assert!(!verify_dilithium_signature(
@@ -266,6 +273,12 @@ fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
 
 #[test]
 fn sphincs_public_and_wallet_api_cover_generation_imports() {
+    // Integration tests don't inherit qrllib's `cfg(test)` scope, so the
+    // SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) sees the test build
+    // as a production build. Flip the runtime bypass before constructing
+    // any `SphincsPlus256sWallet` from this test.
+    enable_experimental_sphincsplus_issuance_for_testing();
+
     let generated = SphincsPlus256s::generate().expect("generated signer");
     assert_eq!(generated.public_key_bytes().len(), SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE);
 
