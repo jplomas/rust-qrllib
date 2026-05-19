@@ -59,7 +59,7 @@ pub use xmss::{
     get_xmss_height_from_sig_size, verify_xmss, verify_xmss_with_custom_wots_param_w,
 };
 
-pub const ADDRESS_SIZE: usize = 48;
+pub const ADDRESS_SIZE: usize = 64;
 pub const DESCRIPTOR_SIZE: usize = 3;
 pub const SEED_SIZE: usize = 48;
 pub const EXTENDED_SEED_SIZE: usize = DESCRIPTOR_SIZE + SEED_SIZE;

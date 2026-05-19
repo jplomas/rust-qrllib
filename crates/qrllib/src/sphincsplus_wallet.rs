@@ -220,7 +220,7 @@ mod tests {
         );
         assert_eq!(
             wallet.address_string(),
-            "Q2587cb706599afb8152e684511eee6c1c5650bb579c9bd530c5a661a5b79a64a68c96db3799b2c24f87c9cc057257096"
+            "Q2587cb706599afb8152e684511eee6c1c5650bb579c9bd530c5a661a5b79a64a68c96db3799b2c24f87c9cc05725709626cee5e4d951f3f64be825a50d67cf5c"
         );
         assert_eq!(
             hex::encode(wallet.public_key()),
