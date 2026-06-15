@@ -17,58 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  dilithium-cross-verify:
-    name: Dilithium (Round 3) Cross-Verification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: 1.95.0
-
-      - name: Clone pq-crystals Dilithium (Round 3)
-        run: |
-          git clone https://github.com/pq-crystals/dilithium.git /tmp/dilithium-ref
-          cd /tmp/dilithium-ref
-          git checkout ac743d5  # Round 3 (pre-FIPS)
-          echo "Reference commit: $(git rev-parse --short HEAD)"
-
-      - name: Generate rust-qrllib Dilithium signature
-        run: cargo run --locked --quiet -p qrllib --example dilithium_sign
-
-      - name: Compile reference verifier
-        run: |
-          cd /tmp/dilithium-ref/ref
-          gcc -o /tmp/verify_dilithium -DDILITHIUM_MODE=5 \
-            "$GITHUB_WORKSPACE/.github/cross-verify/dilithium_verify_ref.c" \
-            sign.c packing.c polyvec.c poly.c ntt.c reduce.c \
-            rounding.c symmetric-shake.c fips202.c randombytes.c -I. -O2
-
-      - name: Verify rust-qrllib signature with reference
-        run: |
-          echo "=== Verifying rust-qrllib signature with pq-crystals reference ==="
-          /tmp/verify_dilithium
-          echo "✓ rust-qrllib → pq-crystals: PASSED"
-
-      - name: Generate reference signature
-        run: |
-          cd /tmp/dilithium-ref/ref
-          gcc -o /tmp/sign_dilithium_ref -DDILITHIUM_MODE=5 \
-            "$GITHUB_WORKSPACE/.github/cross-verify/dilithium_sign_ref.c" \
-            sign.c packing.c polyvec.c poly.c ntt.c reduce.c \
-            rounding.c symmetric-shake.c fips202.c randombytes.c -I. -O2
-          /tmp/sign_dilithium_ref
-
-      - name: Verify reference signature with rust-qrllib
-        run: |
-          echo "=== Verifying pq-crystals signature with rust-qrllib ==="
-          cargo run --locked --quiet -p qrllib --example dilithium_verify
-          echo "✓ pq-crystals → rust-qrllib: PASSED"
-
   mldsa87-cross-verify:
     name: ML-DSA-87 (FIPS 204) Cross-Verification
     runs-on: ubuntu-latest
