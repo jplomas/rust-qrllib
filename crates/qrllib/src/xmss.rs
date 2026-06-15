@@ -219,6 +219,14 @@ impl Xmss {
             return Err(QrllibError::InvalidXmssBdsParams);
         }
 
+        // Reject seeds that are not exactly XMSS_SEED_SIZE (48) bytes — the
+        // SHAKE256 expansion in `xmss_fast_gen_key_pair` would silently stretch
+        // any length into a working tree carrying less entropy than the caller
+        // believes. Mirrors go-qrllib's `InitializeTree` boundary check.
+        if seed.len() != XMSS_SEED_SIZE {
+            return Err(QrllibError::InvalidSeedSize(seed.len(), XMSS_SEED_SIZE));
+        }
+
         let xmss_params =
             XmssParams::new(XMSS_WOTS_PARAM_N, height_u32, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)?;
         let mut bds_state = BdsState::new(height_u32, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
@@ -952,6 +960,13 @@ fn tree_hash_setup(
         stack_levels[stack_offset] = 0;
         stack_offset += 1;
 
+        // Faithful-port checkpoint (mirrors xmss-reference xmss_fast.c at
+        // i==3): this seeds tree_hash[0] from the freshly pushed leaf, a
+        // value that the `(i >> node_height) == 3` branch in the merge loop
+        // below overwrites within the same iteration, so it never reaches
+        // the output for the supported QRL parameters. Kept to preserve
+        // reference equivalence; do not alter without re-running the
+        // bidirectional cross-verify.
         if h > k && i == 3 {
             let src = stack[(stack_offset - 1) * n..stack_offset * n].to_vec();
             bds_state.tree_hash[0].node.copy_from_slice(&src);
@@ -1011,6 +1026,14 @@ fn xmss_fast_gen_key_pair(
     bds_state: &mut BdsState,
     seed: &[u8],
 ) -> Result<()> {
+    // Reject seeds that are not exactly XMSS_SEED_SIZE (48) bytes. SHAKE256
+    // happily expands any input length, so without this guard an empty or
+    // truncated seed silently produces an entropy-starved tree. Mirrors the
+    // `initialize_tree` boundary check (go-qrllib `XMSSFastGenKeyPair`).
+    if seed.len() != XMSS_SEED_SIZE {
+        return Err(QrllibError::InvalidSeedSize(seed.len(), XMSS_SEED_SIZE));
+    }
+
     // QRL convention: SHAKE-256-expand the caller-supplied seed into 96
     // bytes of (SK_SEED || SK_PRF || PUB_SEED), then delegate to the
     // shared keypair-derivation core. The RFC 8391 reference takes the
@@ -1695,6 +1718,47 @@ mod tests {
         assert!(XmssHeight::new(3).is_err());
         assert!(XmssHeight::new(32).is_err());
         assert_eq!(XmssHeight::from_descriptor_byte(0x03).expect("height").as_u8(), 6);
+    }
+
+    #[test]
+    fn xmss_initialize_tree_rejects_non_48_byte_seeds() {
+        let height = XmssHeight::new(4).expect("height");
+        // Exactly 48 bytes is accepted.
+        assert!(Xmss::initialize_tree(height, XmssHashFunction::Shake128, &[0_u8; 48]).is_ok());
+
+        // Any other length is rejected with InvalidSeedSize rather than being
+        // silently SHAKE256-expanded into an entropy-starved tree (06-2026
+        // audit fix; mirrors go-qrllib's InitializeTree boundary check).
+        for bad_len in [0_usize, 1, 32, 47, 49, 96] {
+            let seed = vec![0_u8; bad_len];
+            assert!(
+                matches!(
+                    Xmss::initialize_tree(height, XmssHashFunction::Shake128, &seed),
+                    Err(QrllibError::InvalidSeedSize(actual, 48)) if actual == bad_len
+                ),
+                "seed length {bad_len} must be rejected with InvalidSeedSize"
+            );
+        }
+    }
+
+    #[test]
+    fn xmss_fast_gen_key_pair_rejects_non_48_byte_seeds() {
+        let params = XmssParams::new(XMSS_WOTS_PARAM_N, 4, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+            .expect("params");
+        let mut bds_state = BdsState::new(4, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
+        let mut pk = vec![0_u8; XMSS_PUBLIC_KEY_SIZE];
+        let mut sk = vec![0_u8; XMSS_SECRET_KEY_SIZE];
+        assert!(matches!(
+            xmss_fast_gen_key_pair(
+                XmssHashFunction::Shake128,
+                &params,
+                &mut pk,
+                &mut sk,
+                &mut bds_state,
+                &[0_u8; 47],
+            ),
+            Err(QrllibError::InvalidSeedSize(47, 48))
+        ));
     }
 
     #[test]

@@ -4,9 +4,9 @@
 //! every sign / sign_attached path.
 
 use qrllib::{
-    DILITHIUM_CRYPTO_SEED_SIZE, Dilithium, ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet,
-    QrllibError, Seed, SphincsPlus256sWallet, Xmss, XmssHashFunction, XmssHeight, format_address,
-    is_valid_address, sign_dilithium_with_secret_key, sign_mldsa_with_secret_key,
+    ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, Seed, SphincsPlus256sWallet,
+    Xmss, XmssHashFunction, XmssHeight, format_address, is_valid_address,
+    sign_mldsa_with_secret_key,
 };
 
 #[test]
@@ -51,14 +51,6 @@ fn free_function_randomised_sign_entry_points_are_exposed() {
     let sig_b = sign_mldsa_with_secret_key(b"ctx", b"msg", mldsa.secret_key_bytes().as_slice())
         .expect("randomized mldsa b");
     assert_ne!(sig_a, sig_b);
-
-    // Dilithium
-    let dilithium = Dilithium::from_seed([29_u8; DILITHIUM_CRYPTO_SEED_SIZE]);
-    let dil_a = sign_dilithium_with_secret_key(b"msg", dilithium.secret_key_bytes().as_slice())
-        .expect("randomized dilithium a");
-    let dil_b = sign_dilithium_with_secret_key(b"msg", dilithium.secret_key_bytes().as_slice())
-        .expect("randomized dilithium b");
-    assert_ne!(dil_a, dil_b);
 }
 
 #[test]

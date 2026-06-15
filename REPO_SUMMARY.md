@@ -14,7 +14,7 @@ Primary areas:
 Supported algorithms:
 
 - ML-DSA-87: primary FIPS 204 stateless signature scheme, ported in-repo from `go-qrllib`
-- Dilithium: legacy pre-FIPS compatibility
+- ML-KEM-1024: FIPS 203 key-encapsulation primitive (not a signature), ported in-repo from `go-qrllib`; standalone, not wallet-integrated
 - SPHINCS+-256s robust: conservative hash-based stateless option
 - XMSS: legacy QRL compatibility with strong statefulness caveats
 
@@ -31,7 +31,7 @@ The main checks are:
 Additional workflow coverage:
 
 - `acvp.yml`: ML-DSA-87 keygen/signing against NIST ACVP vectors
-- `cross-verify.yml`: reference implementation interoperability for Dilithium, ML-DSA-87, SPHINCS+, and XMSS
+- `cross-verify.yml`: reference implementation interoperability for ML-DSA-87, SPHINCS+, and XMSS
 - `security.yml`: `cargo audit`, `cargo deny`, and dependency review
 - Rust/npm direct dependencies are exact-pinned; GitHub Actions are SHA-pinned with version comments
 - `pages.yml`: Vue/Tailwind demo build and GitHub Pages deployment
@@ -41,7 +41,7 @@ Additional workflow coverage:
 
 Directionality:
 
-- Dilithium, ML-DSA-87, and SPHINCS+ are bidirectional.
+- ML-DSA-87 and SPHINCS+ are bidirectional.
 - XMSS is one-directional only: `rust-qrllib -> reference`.
 
 XMSS one-directional verification is intentional because the RFC 8391 reference implementation has no deterministic seeded keypair API compatible with QRL's seed expansion.

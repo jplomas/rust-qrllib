@@ -928,7 +928,10 @@ impl SphincsPlus256s {
     }
 
     pub fn from_hex_seed(value: &str) -> Result<Self> {
-        let bytes = hex::decode(trim_hex_prefix(value))?;
+        // Map the decode failure to the sanitized sentinel rather than
+        // propagating `hex::FromHexError`, whose Display echoes the offending
+        // input character — the input is secret seed material (06-2026 audit fix).
+        let bytes = hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?;
         if bytes.len() != SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE {
             return Err(QrllibError::InvalidSphincsSeedSize(
                 bytes.len(),

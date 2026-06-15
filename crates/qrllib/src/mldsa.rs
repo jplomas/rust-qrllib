@@ -243,7 +243,10 @@ impl MlDsa87 {
 
     pub fn from_hex_seed(value: &str) -> Result<Self> {
         let value = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
-        let seed = hex::decode(value)?;
+        // Map the decode failure to the sanitized sentinel rather than
+        // propagating `hex::FromHexError`, whose Display echoes the offending
+        // input character — the input is secret seed material (06-2026 audit fix).
+        let seed = hex::decode(value).map_err(|_| QrllibError::InvalidHexSeed)?;
         if seed.len() != ML_DSA_87_CRYPTO_SEED_SIZE {
             return Err(QrllibError::InvalidMlDsaSeedSize(seed.len(), ML_DSA_87_CRYPTO_SEED_SIZE));
         }
@@ -484,9 +487,9 @@ fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
 
     let mut violation = 0_i32;
     for coefficient in poly.coeffs {
-        // |coef| via branchless sign extension. See `dilithium::poly_chk_norm`
-        // for the TOB-QRLLIB-9 rationale — same fix applied here for
-        // parity and for the same clarity reason.
+        // |coef| via branchless sign extension (TOB-QRLLIB-9): the absolute
+        // value is computed without a data-dependent branch so the norm
+        // check carries no timing dependence on the coefficient's sign.
         let sign = coefficient >> 31;
         let absolute = coefficient.wrapping_sub((sign & 2).wrapping_mul(coefficient));
         violation |= bound.wrapping_sub(1).wrapping_sub(absolute) >> 31;

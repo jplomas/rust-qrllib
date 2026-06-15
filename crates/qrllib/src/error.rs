@@ -8,6 +8,13 @@ pub enum QrllibError {
     #[error("hex decode failed: {0}")]
     Hex(#[from] hex::FromHexError),
 
+    /// Returned when a hex-encoded seed string fails to decode. Unlike
+    /// [`QrllibError::Hex`], this sentinel deliberately does **not** echo the
+    /// offending input characters — the input is secret seed material
+    /// (go-qrllib `ErrInvalidHexSeed`, 06-2026 audit fix).
+    #[error("invalid hex seed")]
+    InvalidHexSeed,
+
     #[error("invalid descriptor")]
     InvalidDescriptor,
 
@@ -32,14 +39,23 @@ pub enum QrllibError {
     #[error("ML-DSA secret key is zeroized")]
     MlDsaSecretKeyZeroized,
 
-    #[error("invalid Dilithium seed size {0}, expected {1}")]
-    InvalidDilithiumSeedSize(usize, usize),
-
     #[error("invalid SPHINCS+ seed size {0}, expected {1}")]
     InvalidSphincsSeedSize(usize, usize),
 
     #[error("invalid seed size {0}, expected {1}")]
     InvalidSeedSize(usize, usize),
+
+    #[error("invalid ML-KEM-1024 seed size {0}, expected {1}")]
+    InvalidMlKemSeedSize(usize, usize),
+
+    #[error("invalid ML-KEM-1024 ciphertext size {0}, expected {1}")]
+    InvalidMlKemCiphertextSize(usize, usize),
+
+    #[error("invalid ML-KEM-1024 encapsulation key size {0}, expected {1}")]
+    InvalidMlKemEncapsulationKeySize(usize, usize),
+
+    #[error("invalid ML-KEM-1024 encapsulation key encoding")]
+    InvalidMlKemEncoding,
 
     #[error("invalid extended seed length {0}, expected {1}")]
     InvalidExtendedSeedSize(usize, usize),
@@ -49,15 +65,6 @@ pub enum QrllibError {
 
     #[error("signing rejection budget exceeded after {0} iterations")]
     RejectionBudgetExceeded(u32),
-
-    #[error("invalid Dilithium public key size {0}, expected {1}")]
-    InvalidDilithiumPublicKeySize(usize, usize),
-
-    #[error("invalid Dilithium secret key size {0}, expected {1}")]
-    InvalidDilithiumSecretKeySize(usize, usize),
-
-    #[error("Dilithium secret key is zeroized")]
-    DilithiumSecretKeyZeroized,
 
     #[error("SPHINCS+ secret key is zeroized")]
     SphincsPlusSecretKeyZeroized,

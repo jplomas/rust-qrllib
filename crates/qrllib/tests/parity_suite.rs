@@ -1,10 +1,8 @@
 use qrllib::{
-    DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SIGNATURE_SIZE, Dilithium, ML_DSA_87_CRYPTO_SEED_SIZE,
-    ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, dilithium_extract_message,
-    dilithium_extract_signature, dilithium_open, extract_message, extract_signature,
-    mldsa::verify_bytes, open, sphincsplus_extract_message, sphincsplus_extract_signature,
-    sphincsplus_open, verify_dilithium_signature, verify_sphincsplus_signature,
+    ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
+    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, extract_message,
+    extract_signature, mldsa::verify_bytes, open, sphincsplus_extract_message,
+    sphincsplus_extract_signature, sphincsplus_open, verify_sphincsplus_signature,
 };
 
 const ML_DSA_C_TILDE_BYTES: usize = 64;
@@ -89,7 +87,6 @@ fn mldsa_canonicality_and_edge_cases_match_go_expectations() {
 #[test]
 fn malformed_signature_helpers_do_not_panic_for_supported_stateless_schemes() {
     let mldsa_public_key = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
-    let dilithium_public_key = [0_u8; DILITHIUM_PUBLIC_KEY_SIZE];
     let sphincs_public_key = [0_u8; SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE];
 
     for length in [
@@ -116,26 +113,6 @@ fn malformed_signature_helpers_do_not_panic_for_supported_stateless_schemes() {
         0_usize,
         1,
         16,
-        DILITHIUM_SIGNATURE_SIZE - 1,
-        DILITHIUM_SIGNATURE_SIZE,
-        DILITHIUM_SIGNATURE_SIZE + 33,
-    ] {
-        let input = vec![0x3c; length];
-        let _ = dilithium_extract_message(&input);
-        let _ = dilithium_extract_signature(&input);
-        let _ = dilithium_open(&input, &dilithium_public_key);
-        let signature = if length >= DILITHIUM_SIGNATURE_SIZE {
-            input[..DILITHIUM_SIGNATURE_SIZE].to_vec()
-        } else {
-            input.clone()
-        };
-        let _ = verify_dilithium_signature(b"", &signature, &dilithium_public_key);
-    }
-
-    for length in [
-        0_usize,
-        1,
-        16,
         SPHINCS_PLUS_256S_SIGNATURE_SIZE - 1,
         SPHINCS_PLUS_256S_SIGNATURE_SIZE,
         SPHINCS_PLUS_256S_SIGNATURE_SIZE + 33,
@@ -151,30 +128,4 @@ fn malformed_signature_helpers_do_not_panic_for_supported_stateless_schemes() {
         };
         let _ = verify_sphincsplus_signature(b"", &signature, &sphincs_public_key);
     }
-}
-
-#[test]
-fn dilithium_edge_case_verification_matches_go_expectations() {
-    let signer = Dilithium::from_seed([9_u8; 32]);
-    let public_key = signer.public_key_bytes();
-    let message = b"test message";
-    let signature = signer.sign(message).expect("signature");
-
-    assert!(verify_dilithium_signature(message, &signature, &public_key));
-    assert!(!verify_dilithium_signature(message, &[0_u8; DILITHIUM_SIGNATURE_SIZE], &public_key));
-    assert!(!verify_dilithium_signature(
-        message,
-        &vec![0xff; DILITHIUM_SIGNATURE_SIZE],
-        &public_key
-    ));
-
-    let mut corrupted = signature;
-    for index in (0..corrupted.len()).step_by((corrupted.len() / 10).max(1)) {
-        corrupted[index] ^= 0xff;
-        assert!(!verify_dilithium_signature(message, &corrupted, &public_key));
-        corrupted[index] ^= 0xff;
-    }
-
-    let empty_signature = signer.sign(b"").expect("empty signature");
-    assert!(verify_dilithium_signature(b"", &empty_signature, &public_key));
 }

@@ -16,24 +16,24 @@ This library assumes a trusted execution environment, a secure operating-system 
 
 This library protects against post-quantum signature forgery under the assumptions of the configured algorithm. It does not protect against compromised hosts, weak system randomness, application-level replay/rate-limit failures, or XMSS index reuse.
 
-### Signing modes (ML-DSA-87 and Dilithium)
+### Signing modes (ML-DSA-87)
 
-Both ML-DSA-87 and the legacy Dilithium signer are **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode (TOB-QRLLIB-6):
+ML-DSA-87 is **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode (TOB-QRLLIB-6):
 
 - **Hedged (default).** `sign` / `sign_attached` draw a fresh 32-byte value from the system RNG on every call. Two signs of the same `(secret_key, [context,] message)` produce **distinct** signature bytes; both verify under the same public key. Verification is unchanged and existing verifiers — on-chain or off — are unaffected.
 - **Deterministic (FIPS 204 §3.5 opt-in).** `sign_deterministic` / `sign_attached_deterministic` use a fixed all-zero per-signature value, so the same `(secret_key, [context,] message)` always yields byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT test-vector reproduction.
 
 Deterministic signing is vulnerable to fault-injection attacks: an adversary who can flip a single bit during the `z` computation can differentiate two signatures of the same message and recover `s1`/`s2` by lattice differential analysis. Hedged signing frustrates this attack because two signings of the same message use different internal randomness. SPHINCS+-256s robust is randomised-by-default per its parameter-set definition and does not expose a separate deterministic mode.
 
-The free signing functions `sign_with_secret_key` (ML-DSA-87) and `sign_dilithium_with_secret_key` (Dilithium) follow the same convention: hedged by default, with `sign_with_secret_key_deterministic` / `sign_dilithium_with_secret_key_deterministic` as the explicit opt-in. ACVP, KAT, and cross-verification test vectors that pin specific signature bytes route through the deterministic entry points.
+The free signing function `sign_with_secret_key` (ML-DSA-87) follows the same convention: hedged by default, with `sign_with_secret_key_deterministic` as the explicit opt-in. ACVP, KAT, and cross-verification test vectors that pin specific signature bytes route through the deterministic entry points.
 
 ### Memory hygiene
 
-Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `Dilithium`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet` — implements `Drop` that zeroizes its backing buffer. Callers do not need to call `.zeroize()` explicitly for the scope-exit path to clear secrets from memory. Explicit `.zeroize()` is retained for long-lived signers that need to clear state mid-lifetime.
+Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet` — implements `Drop` that zeroizes its backing buffer. Callers do not need to call `.zeroize()` explicitly for the scope-exit path to clear secrets from memory. Explicit `.zeroize()` is retained for long-lived signers that need to clear state mid-lifetime.
 
 Accessor methods that return owned secret bytes (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies inherit the same drop-clear semantics. The owned wrapper dereferences transparently to the underlying byte array or `Vec<u8>` and works unchanged with `hex::encode`, `Sha256::digest`, `.iter()`, and the library's verify helpers.
 
-After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `sign_attached`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
+After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `sign_attached`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
 
 ### API Precondition Guarantees
 
@@ -67,15 +67,15 @@ The Go-side findings that *do* port to Rust are tracked separately in `~/Obsidia
 The `qrllib-wasm` crate exposes two API shapes:
 
 - **Handle-based (recommended).** `create_*_wallet`, `open_*_wallet`, `wallet_snapshot`, `wallet_sign`, `close_wallet`, `close_all_wallets`. The extended seed crosses the wasm/JS boundary exactly once (at `open_*_wallet` time); thereafter a plain `u32` handle is passed back and forth. `close_wallet` removes the registry entry, and the wallet's `Drop` zeroizes the in-wasm state. JavaScript strings never hold the seed between calls.
-- **Legacy string-based.** `sign_message`, `sign_sphincsplus_message`, `sign_dilithium_message`, `sign_xmss_message`, and the paired `*_from_extended_seed_hex` / `generate_*` helpers. Retained for backwards compatibility. These re-accept the seed as a JavaScript string on every call; the seed persists in the JS heap across calls and cannot be zeroized from Rust. New browser consumers should prefer the handle-based API.
+- **Legacy string-based.** `sign_message`, `sign_sphincsplus_message`, `sign_xmss_message`, and the paired `*_from_extended_seed_hex` / `generate_*` helpers. Retained for backwards compatibility. These re-accept the seed as a JavaScript string on every call; the seed persists in the JS heap across calls and cannot be zeroized from Rust. New browser consumers should prefer the handle-based API.
 
 ## Algorithm Notes
 
 | Algorithm | Status | Notes |
 |-----------|--------|-------|
 | ML-DSA-87 | Primary | FIPS 204, NIST level 5, stateless |
+| ML-KEM-1024 | Supported | FIPS 203 key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
 | SPHINCS+-256s robust | Supported | Hash-based, stateless, pre-FIPS robust parameter set |
-| Dilithium | Legacy | Pre-FIPS compatibility path |
 | XMSS | Legacy | RFC 8391, stateful, QRL compatibility only |
 
 ## XMSS State Management
@@ -100,7 +100,9 @@ Rust regression suites cover malformed input, canonicality, KATs, thread-safety 
 - `crates/qrllib/tests/kat_vectors.rs`
 - `crates/qrllib/tests/thread_fuzz_suite.rs`
 - `crates/qrllib/tests/acvp_mldsa.rs`
-- `crates/qrllib/tests/rev_1_2_additions.rs` — regression coverage for the randomised-signing entry points, the `QrllibError::RejectionBudgetExceeded` variant, the lowercase-`q` address-validation tolerance, and the post-zeroize rejection of every sign/seal path (ML-DSA, Dilithium, SPHINCS+, and XMSS).
+- `crates/qrllib/tests/mlkem_cross_vectors.rs` — ML-KEM-1024 key generation, encapsulation, and decapsulation cross-verified byte-for-byte against `go-qrllib`.
+- ML-KEM-1024 NIST ACVP keyGen + encapDecap (the `acvp` module in `crates/qrllib/src/mlkem.rs`) and the C2SP/wycheproof + C2SP/CCTV corpora (`crates/qrllib/tests/wycheproof_mlkem.rs`), consumed from upstream at CI time. See `.github/acvp/README.md` and `.github/wycheproof/README.md`.
+- `crates/qrllib/tests/hardening_suite.rs` — regression coverage for the randomised-signing entry points, the `QrllibError::RejectionBudgetExceeded` variant, the lowercase-`q` address-validation tolerance, and the post-zeroize rejection of every sign/seal path (ML-DSA, SPHINCS+, and XMSS).
 
 ## Dependency Security
 

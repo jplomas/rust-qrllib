@@ -1,8 +1,8 @@
 use qrllib::{
-    Descriptor, Dilithium, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE, LEGACY_XMSS_EXTENDED_SEED_SIZE,
+    Descriptor, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE, LEGACY_XMSS_EXTENDED_SEED_SIZE,
     LegacyXmssWallet, MlDsa87Wallet, QrllibError, SphincsPlus256sWallet, XmssHashFunction,
-    XmssHeight, sign_dilithium_with_secret_key, verify_dilithium_signature, verify_legacy_xmss,
-    verify_mldsa87_wallet_signature, verify_sphincsplus_wallet_signature,
+    XmssHeight, verify_legacy_xmss, verify_mldsa87_wallet_signature,
+    verify_sphincsplus_wallet_signature,
 };
 use serde::Serialize;
 use std::cell::RefCell;
@@ -15,14 +15,18 @@ use wasm_bindgen::prelude::*;
 /// browser callers do not need to pass the raw extended seed hex on every
 /// signing call; the seed crosses the boundary exactly once at
 /// [`open_mldsa_wallet`] / [`open_sphincsplus_wallet`] /
-/// [`open_legacy_xmss_wallet`] / [`open_dilithium_signer`] time. Calling
+/// [`open_legacy_xmss_wallet`] time. Calling
 /// [`close_wallet`] removes the entry and runs the wallet's `Drop`, which
 /// zeroizes the in-memory secret state.
+// The ML-DSA-87 variant carries kilobyte-scale keys while the others are far
+// smaller; the size gap is inherent to the schemes. Registry entries live on
+// the heap (in a HashMap), so boxing the large variant would only add an
+// indirection without a real footprint win.
+#[allow(clippy::large_enum_variant)]
 enum WalletEntry {
     MlDsa87(MlDsa87Wallet),
     SphincsPlus256s(SphincsPlus256sWallet),
     LegacyXmss(LegacyXmssWallet),
-    Dilithium(Dilithium),
 }
 
 thread_local! {
@@ -87,14 +91,6 @@ struct SignatureSnapshot {
     verified: bool,
     xmss_index: Option<u32>,
     xmss_next_index: Option<u32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DilithiumSnapshot {
-    scheme: &'static str,
-    seed_hex: String,
-    public_key_hex: String,
 }
 
 fn to_js_error(error: impl core::fmt::Display) -> JsValue {
@@ -169,14 +165,6 @@ fn snapshot_sphincs_wallet(wallet: &SphincsPlus256sWallet) -> Result<WalletSnaps
     })
 }
 
-fn snapshot_dilithium(signer: &Dilithium) -> DilithiumSnapshot {
-    DilithiumSnapshot {
-        scheme: "legacy-dilithium",
-        seed_hex: signer.hex_seed(),
-        public_key_hex: hex::encode(signer.public_key_bytes()),
-    }
-}
-
 fn xmss_wallet_from_hex_seed(
     extended_seed_hex: &str,
     index: u32,
@@ -216,18 +204,6 @@ pub fn generate_sphincsplus_wallet() -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn generate_dilithium_signer() -> Result<JsValue, JsValue> {
-    let signer = Dilithium::generate().map_err(to_js_error)?;
-    serde_wasm_bindgen::to_value(&snapshot_dilithium(&signer)).map_err(to_js_error)
-}
-
-#[wasm_bindgen]
-pub fn dilithium_from_hex_seed(seed_hex: String) -> Result<JsValue, JsValue> {
-    let signer = Dilithium::from_hex_seed(&seed_hex).map_err(to_js_error)?;
-    serde_wasm_bindgen::to_value(&snapshot_dilithium(&signer)).map_err(to_js_error)
-}
-
-#[wasm_bindgen]
 pub fn sphincsplus_wallet_from_extended_seed_hex(
     extended_seed_hex: String,
 ) -> Result<JsValue, JsValue> {
@@ -258,28 +234,6 @@ pub fn sign_message(extended_seed_hex: String, message: String) -> Result<JsValu
 }
 
 #[wasm_bindgen]
-pub fn sign_dilithium_message(seed_hex: String, message: String) -> Result<JsValue, JsValue> {
-    let signer = Dilithium::from_hex_seed(&seed_hex).map_err(to_js_error)?;
-    let signature =
-        sign_dilithium_with_secret_key(message.as_bytes(), signer.secret_key_bytes().as_slice())
-            .map_err(to_js_error)?;
-
-    let payload = SignatureSnapshot {
-        scheme: "legacy-dilithium",
-        signature_hex: hex::encode(signature),
-        verified: verify_dilithium_signature(
-            message.as_bytes(),
-            &signature,
-            &signer.public_key_bytes(),
-        ),
-        xmss_index: None,
-        xmss_next_index: None,
-    };
-
-    serde_wasm_bindgen::to_value(&payload).map_err(to_js_error)
-}
-
-#[wasm_bindgen]
 pub fn verify_message(
     public_key_hex: String,
     descriptor_hex: String,
@@ -292,17 +246,6 @@ pub fn verify_message(
     let signature = hex::decode(signature_hex).map_err(to_js_error)?;
 
     Ok(verify_mldsa87_wallet_signature(message.as_bytes(), &signature, &public_key, descriptor))
-}
-
-#[wasm_bindgen]
-pub fn verify_dilithium_message(
-    public_key_hex: String,
-    message: String,
-    signature_hex: String,
-) -> Result<bool, JsValue> {
-    let public_key = decode_prefixed_hex(&public_key_hex)?;
-    let signature = decode_prefixed_hex(&signature_hex)?;
-    Ok(verify_dilithium_signature(message.as_bytes(), &signature, &public_key))
 }
 
 #[wasm_bindgen]
@@ -460,20 +403,6 @@ pub fn open_legacy_xmss_wallet(extended_seed_hex: String, index: u32) -> Result<
     Ok(store_wallet(WalletEntry::LegacyXmss(wallet)))
 }
 
-/// Generate a fresh legacy Dilithium signer inside wasm and return a handle.
-#[wasm_bindgen]
-pub fn create_dilithium_signer() -> Result<u32, JsValue> {
-    let signer = Dilithium::generate().map_err(to_js_error)?;
-    Ok(store_wallet(WalletEntry::Dilithium(signer)))
-}
-
-/// Open a legacy Dilithium signer from its 32-byte hex seed and return a handle.
-#[wasm_bindgen]
-pub fn open_dilithium_signer(seed_hex: String) -> Result<u32, JsValue> {
-    let signer = Dilithium::from_hex_seed(&seed_hex).map_err(to_js_error)?;
-    Ok(store_wallet(WalletEntry::Dilithium(signer)))
-}
-
 /// Return the snapshot JSON for the wallet behind `handle`.
 #[wasm_bindgen]
 pub fn wallet_snapshot(handle: u32) -> Result<JsValue, JsValue> {
@@ -486,9 +415,6 @@ pub fn wallet_snapshot(handle: u32) -> Result<JsValue, JsValue> {
         }
         WalletEntry::LegacyXmss(wallet) => {
             serde_wasm_bindgen::to_value(&snapshot_xmss_wallet(wallet)?).map_err(to_js_error)
-        }
-        WalletEntry::Dilithium(signer) => {
-            serde_wasm_bindgen::to_value(&snapshot_dilithium(signer)).map_err(to_js_error)
         }
     })
 }
@@ -540,25 +466,6 @@ pub fn wallet_sign(handle: u32, message: String) -> Result<JsValue, JsValue> {
                 verified: verify_legacy_xmss(message.as_bytes(), &signature, wallet.public_key()),
                 xmss_index: Some(current_index),
                 xmss_next_index: Some(wallet.index()),
-            };
-            serde_wasm_bindgen::to_value(&payload).map_err(to_js_error)
-        }
-        WalletEntry::Dilithium(signer) => {
-            let signature = sign_dilithium_with_secret_key(
-                message.as_bytes(),
-                signer.secret_key_bytes().as_slice(),
-            )
-            .map_err(to_js_error)?;
-            let payload = SignatureSnapshot {
-                scheme: "legacy-dilithium",
-                signature_hex: hex::encode(signature),
-                verified: verify_dilithium_signature(
-                    message.as_bytes(),
-                    &signature,
-                    &signer.public_key_bytes(),
-                ),
-                xmss_index: None,
-                xmss_next_index: None,
             };
             serde_wasm_bindgen::to_value(&payload).map_err(to_js_error)
         }

@@ -65,3 +65,42 @@ jobs:
           ACVP_VECTORS_DIR: /tmp/acvp-vectors
         run: |
           cargo test --locked --test acvp_mldsa -- --nocapture
+
+  mlkem1024-acvp:
+    name: ML-KEM-1024 ACVP Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Clone NIST ACVP-Server (latest)
+        run: |
+          git clone --depth 1 --no-checkout --filter=blob:none \
+            https://github.com/usnistgov/ACVP-Server.git /tmp/acvp-server
+          cd /tmp/acvp-server
+          git sparse-checkout init --cone
+          git sparse-checkout set \
+            gen-val/json-files/ML-KEM-keyGen-FIPS203 \
+            gen-val/json-files/ML-KEM-encapDecap-FIPS203
+          git checkout
+          echo "ACVP-Server commit: $(git rev-parse --short HEAD)"
+          echo "ACVP-Server date: $(git log -1 --format=%ci)"
+          ls gen-val/json-files/ML-KEM-keyGen-FIPS203/prompt.json
+          ls gen-val/json-files/ML-KEM-encapDecap-FIPS203/prompt.json
+
+      - name: Run ACVP tests
+        # The ML-KEM ACVP tests read the raw NIST prompt/expectedResults format
+        # directly (no merge step), so point MLKEM_ACVP_VECTORS_DIR at the
+        # directory holding the two suite subfolders. They live in-crate as lib
+        # unit tests (the decapsulation cases need the expanded-key form), so
+        # filter to the `acvp::` module.
+        env:
+          MLKEM_ACVP_VECTORS_DIR: /tmp/acvp-server/gen-val/json-files
+        run: |
+          cargo test --locked --package qrllib --lib 'acvp::' -- --nocapture

@@ -1,15 +1,11 @@
 use qrllib::{
-    ADDRESS_SIZE, DESCRIPTOR_SIZE, DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE,
-    DILITHIUM_SECRET_KEY_SIZE, DILITHIUM_SIGNATURE_SIZE, Descriptor, Dilithium, ExtendedSeed,
-    ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
-    ML_DSA_87_SIGNATURE_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, SEED_SIZE,
-    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed, SphincsPlus256s, SphincsPlus256sWallet, WalletType,
-    bin_to_mnemonic, dilithium_extract_message, dilithium_extract_signature, dilithium_open,
+    ADDRESS_SIZE, DESCRIPTOR_SIZE, Descriptor, ExtendedSeed, ML_DSA_87_CRYPTO_SEED_SIZE,
+    ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
+    MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed,
+    SphincsPlus256s, SphincsPlus256sWallet, WalletType, bin_to_mnemonic,
     enable_experimental_sphincsplus_issuance_for_testing, extract_message, extract_signature,
     format_address, get_address, is_valid_address, mnemonic_to_bin, open,
-    sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_deterministic,
-    validate_dilithium_public_key, validate_dilithium_secret_key, validate_mldsa_public_key,
-    validate_mldsa_secret_key, verify_dilithium_signature, verify_mldsa87_wallet_signature,
+    validate_mldsa_public_key, validate_mldsa_secret_key, verify_mldsa87_wallet_signature,
 };
 
 #[test]
@@ -154,69 +150,6 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
 }
 
 #[test]
-fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
-    let generated = Dilithium::generate().expect("generated signer");
-    let seed_hex = generated.hex_seed();
-    let imported = Dilithium::from_hex_seed(&seed_hex).expect("imported signer");
-    assert_eq!(generated.public_key_bytes(), imported.public_key_bytes());
-    assert!(validate_dilithium_public_key(&imported.public_key_bytes()).is_ok());
-    assert!(validate_dilithium_secret_key(imported.secret_key_bytes().as_slice()).is_ok());
-
-    let message = b"legacy detached signatures in wasm";
-    // Byte-equality between the detached signature and the free-fn
-    // signature requires deterministic mode; default `sign` is hedged
-    // per TOB-QRLLIB-6.
-    let signature = generated.sign_deterministic(message).expect("signature");
-    assert_eq!(signature.len(), DILITHIUM_SIGNATURE_SIZE);
-    assert_eq!(
-        dilithium_extract_message(&generated.sign_attached(message).expect("sealed"))
-            .expect("message"),
-        message
-    );
-    assert_eq!(dilithium_extract_signature(&signature).expect("signature slice"), signature);
-    assert!(dilithium_extract_signature(&signature[..signature.len() - 1]).is_none());
-    assert_eq!(dilithium_extract_message(&signature).expect("empty message"), b"");
-
-    let sealed = imported.sign_attached(message).expect("sealed message");
-    let opened = dilithium_open(&sealed, &imported.public_key_bytes()).expect("opened");
-    assert_eq!(opened, message);
-    assert!(dilithium_open(&[1_u8; 4], &imported.public_key_bytes()).is_none());
-
-    assert!(verify_dilithium_signature(message, &signature, &imported.public_key_bytes()));
-    assert_eq!(
-        signature,
-        sign_dilithium_with_secret_key_deterministic(
-            message,
-            imported.secret_key_bytes().as_slice()
-        )
-        .expect("sign with secret key (deterministic)")
-    );
-    assert!(Dilithium::from_hex_seed("0x00").is_err());
-    assert!(!verify_dilithium_signature(
-        message,
-        &signature,
-        &[0_u8; DILITHIUM_PUBLIC_KEY_SIZE - 1]
-    ));
-
-    let mut zeroized = imported.clone();
-    zeroized.zeroize();
-    assert!(zeroized.seed().iter().all(|byte| *byte == 0));
-    assert!(zeroized.secret_key_bytes().iter().all(|byte| *byte == 0));
-    assert!(matches!(
-        sign_dilithium_with_secret_key(message, zeroized.secret_key_bytes().as_slice()),
-        Err(QrllibError::DilithiumSecretKeyZeroized)
-    ));
-    assert!(matches!(
-        validate_dilithium_secret_key(&[0_u8; 1]),
-        Err(QrllibError::InvalidDilithiumSecretKeySize(1, DILITHIUM_SECRET_KEY_SIZE))
-    ));
-    assert!(matches!(
-        validate_dilithium_public_key(&[0_u8; 1]),
-        Err(QrllibError::InvalidDilithiumPublicKeySize(1, DILITHIUM_PUBLIC_KEY_SIZE))
-    ));
-}
-
-#[test]
 fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
     let seed = Seed::from_bytes(&[11_u8; SEED_SIZE]).expect("seed");
     let wallet = MlDsa87Wallet::from_seed(seed.clone()).expect("wallet from seed");
@@ -303,7 +236,7 @@ fn error_messages_remain_human_readable() {
     assert!(error.to_string().contains("getrandom"));
     assert_eq!(QrllibError::InvalidDescriptor.to_string(), "invalid descriptor");
     assert_eq!(
-        QrllibError::InvalidDilithiumSeedSize(1, DILITHIUM_CRYPTO_SEED_SIZE).to_string(),
-        "invalid Dilithium seed size 1, expected 32"
+        QrllibError::InvalidMlDsaSeedSize(1, ML_DSA_87_CRYPTO_SEED_SIZE).to_string(),
+        "invalid ML-DSA seed size 1, expected 32"
     );
 }

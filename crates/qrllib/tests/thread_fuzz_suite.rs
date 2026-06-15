@@ -1,13 +1,11 @@
 use std::{sync::Arc, thread};
 
 use qrllib::{
-    DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SIGNATURE_SIZE, Dilithium, ML_DSA_87_PUBLIC_KEY_SIZE,
-    ML_DSA_87_SIGNATURE_SIZE, MlDsa87, SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE,
-    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s, Xmss,
-    XmssHashFunction, XmssHeight, dilithium_extract_message, dilithium_extract_signature,
-    dilithium_open, extract_message, extract_signature, mldsa::verify_bytes, open,
-    sphincsplus_extract_message, sphincsplus_extract_signature, sphincsplus_open,
-    verify_dilithium_signature, verify_sphincsplus_signature, verify_xmss,
+    ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
+    SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
+    SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s, Xmss, XmssHashFunction, XmssHeight,
+    extract_message, extract_signature, mldsa::verify_bytes, open, sphincsplus_extract_message,
+    sphincsplus_extract_signature, sphincsplus_open, verify_sphincsplus_signature, verify_xmss,
     verify_xmss_with_custom_wots_param_w,
 };
 
@@ -20,46 +18,11 @@ fn pad_array<const N: usize>(input: &[u8]) -> [u8; N] {
 
 #[test]
 fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths() {
-    // This test asserts byte-equality between parallel signs of the
-    // same message — which requires FIPS 204 §3.5 deterministic mode.
-    // Default `sign` is hedged per TOB-QRLLIB-6, so route through the
-    // explicit `sign_deterministic` entry points throughout.
-    let dilithium = Arc::new(Dilithium::from_seed([7_u8; 32]));
-    let dilithium_message = b"concurrent dilithium verification".to_vec();
-    let dilithium_signature =
-        dilithium.sign_deterministic(&dilithium_message).expect("dilithium signature");
-    let mut dilithium_sealed = dilithium_signature.to_vec();
-    dilithium_sealed.extend_from_slice(&dilithium_message);
-    let dilithium_public_key = dilithium.public_key_bytes();
-
-    thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for _ in 0..4 {
-            let signer = Arc::clone(&dilithium);
-            let message = dilithium_message.clone();
-            let signature = dilithium_signature;
-            let sealed = dilithium_sealed.clone();
-            handles.push(scope.spawn(move || {
-                assert!(verify_dilithium_signature(&message, &signature, &dilithium_public_key));
-                assert_eq!(
-                    dilithium_open(&sealed, &dilithium_public_key).expect("opened"),
-                    message
-                );
-                assert_eq!(
-                    dilithium_extract_signature(&sealed).expect("signature slice").len(),
-                    DILITHIUM_SIGNATURE_SIZE
-                );
-                assert!(dilithium_extract_message(&sealed).is_some());
-                signer.sign_deterministic(&message).expect("parallel sign")
-            }));
-        }
-
-        let first = handles.remove(0).join().expect("thread join");
-        for handle in handles {
-            assert_eq!(handle.join().expect("thread join"), first);
-        }
-    });
-
+    // Each scheme is exercised across threads on its read-only verify /
+    // open / extract paths plus, for the stateless signers, concurrent
+    // signing. Default `sign` is hedged per TOB-QRLLIB-6; where a stable
+    // byte image is needed for setup it is produced via the explicit
+    // `sign_deterministic` entry points.
     let mldsa = Arc::new(MlDsa87::from_seed([9_u8; 32]));
     let mldsa_context = b"context".to_vec();
     let mldsa_message = b"concurrent mldsa verification".to_vec();
@@ -228,40 +191,6 @@ fn xmss_thread_safety_matches_stateful_contract() {
 
 #[test]
 fn go_fuzz_seed_corpora_do_not_panic_in_rust() {
-    let dilithium_verify_corpus = [
-        (Vec::new(), vec![0_u8; DILITHIUM_SIGNATURE_SIZE], vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE]),
-        (
-            vec![0_u8; 32],
-            vec![0_u8; DILITHIUM_SIGNATURE_SIZE],
-            vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE],
-        ),
-        (
-            vec![0_u8; 1000],
-            vec![0_u8; DILITHIUM_SIGNATURE_SIZE],
-            vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE],
-        ),
-    ];
-    for (message, sig_bytes, pk_bytes) in dilithium_verify_corpus {
-        let signature = pad_array::<DILITHIUM_SIGNATURE_SIZE>(&sig_bytes);
-        let public_key = pad_array::<DILITHIUM_PUBLIC_KEY_SIZE>(&pk_bytes);
-        let _ = verify_dilithium_signature(&message, &signature, &public_key);
-    }
-    for (signature_message, pk_bytes) in [
-        (Vec::new(), vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE]),
-        (vec![0_u8; DILITHIUM_SIGNATURE_SIZE], vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE]),
-        (vec![0_u8; DILITHIUM_SIGNATURE_SIZE + 100], vec![0_u8; DILITHIUM_PUBLIC_KEY_SIZE]),
-    ] {
-        let public_key = pad_array::<DILITHIUM_PUBLIC_KEY_SIZE>(&pk_bytes);
-        let _ = dilithium_open(&signature_message, &public_key);
-    }
-    for len in
-        [0, DILITHIUM_SIGNATURE_SIZE - 1, DILITHIUM_SIGNATURE_SIZE, DILITHIUM_SIGNATURE_SIZE + 100]
-    {
-        let input = vec![0_u8; len];
-        let _ = dilithium_extract_message(&input);
-        let _ = dilithium_extract_signature(&input);
-    }
-
     let mldsa_verify_corpus = [
         (
             Vec::new(),

@@ -2,11 +2,11 @@
 
 pub mod address;
 pub mod descriptor;
-pub mod dilithium;
 pub mod error;
 mod lattice;
 pub mod legacy_xmss;
 pub mod mldsa;
+pub mod mlkem;
 pub mod mnemonic;
 pub mod seed;
 pub mod signing_context;
@@ -21,12 +21,6 @@ pub use address::{
     format_address, get_address, is_valid_address, is_valid_checksum_address, to_checksum_address,
 };
 pub use descriptor::Descriptor;
-pub use dilithium::{
-    DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SECRET_KEY_SIZE,
-    DILITHIUM_SIGNATURE_SIZE, Dilithium, dilithium_extract_message, dilithium_extract_signature,
-    dilithium_open, sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_deterministic,
-    validate_dilithium_public_key, validate_dilithium_secret_key, verify_dilithium_signature,
-};
 pub use error::{QrllibError, Result};
 pub use legacy_xmss::{
     LEGACY_XMSS_ADDRESS_SIZE, LEGACY_XMSS_DESCRIPTOR_SIZE, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE,
@@ -40,6 +34,10 @@ pub use mldsa::{
     sign_with_secret_key as sign_mldsa_with_secret_key,
     sign_with_secret_key_deterministic as sign_mldsa_with_secret_key_deterministic,
     validate_mldsa_public_key, validate_mldsa_secret_key,
+};
+pub use mlkem::{
+    DecapsulationKey, EncapsulationKey, MLKEM1024_CIPHERTEXT_SIZE,
+    MLKEM1024_ENCAPSULATION_KEY_SIZE, MLKEM1024_SEED_SIZE, MLKEM1024_SHARED_KEY_SIZE,
 };
 pub use mnemonic::{bin_to_mnemonic, mnemonic_to_bin};
 pub use seed::{ExtendedSeed, Seed};

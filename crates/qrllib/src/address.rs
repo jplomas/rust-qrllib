@@ -4,6 +4,13 @@ use crate::{
     error::{QrllibError, Result},
 };
 
+// Compile-time invariant: a QRL address is the first ADDRESS_SIZE bytes of
+// SHAKE256(descriptor || pk), and the checksum / format helpers below assume
+// the address fits the project's 64-byte ceiling. Mirrors the runtime
+// `AddressSize <= 64` guard in go-qrllib's `UnsafeGetAddress`, enforced here at
+// compile time instead.
+const _: () = assert!(ADDRESS_SIZE <= 64);
+
 /// Derive an address from `public_key` and `descriptor` **without** validating
 /// that the public-key length matches the descriptor's declared wallet type.
 ///

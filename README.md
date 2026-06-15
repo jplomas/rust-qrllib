@@ -6,14 +6,14 @@ Rust implementation of the Quantum Resistant Ledger cryptographic library, with 
 
 ## Overview
 
-`rust-qrllib` provides post-quantum signature schemes and QRL wallet/address helpers for native Rust and WebAssembly consumers.
+`rust-qrllib` provides post-quantum signature schemes — plus an ML-KEM-1024 key-encapsulation primitive — and QRL wallet/address helpers for native Rust and WebAssembly consumers.
 
 Supported algorithms:
 
 | Algorithm | Type | Standard | Use case |
 |-----------|------|----------|----------|
 | ML-DSA-87 | Lattice-based | FIPS 204 | Primary stateless signature scheme |
-| Dilithium | Lattice-based | Pre-FIPS | Legacy compatibility |
+| ML-KEM-1024 | Lattice-based (KEM) | FIPS 203 | Key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
 | SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path gated pending QRL's SLH-DSA parameter-set choice |
 | XMSS | Hash-based | Pre-standardisation; see XMSS notes | QRL v1 → v2 migration |
 
@@ -153,7 +153,6 @@ Low-level signers are available for callers that do not need wallet descriptors,
 |-----|---------|
 | `MlDsa87` | FIPS 204 ML-DSA-87 signer with context-aware signing |
 | `SphincsPlus256s` | SPHINCS+-SHAKE-256s-robust signer |
-| `Dilithium` | Legacy CRYSTALS-Dilithium Round 3 compatibility signer |
 | `Xmss` | Lower-level RFC 8391 XMSS tree signer |
 
 Common low-level methods:
@@ -162,7 +161,6 @@ Common low-level methods:
 |------|---------------------------|
 | `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
 | `SphincsPlus256s` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_attached`, `zeroize` |
-| `Dilithium` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
 | `Xmss` | `initialize_tree`, `seed`, `secret_key`, `public_seed`, `root`, `public_key`, `hash_function`, `height`, `index`, `set_index`, `sign`, `zeroize` |
 
 Low-level verification and sealed-message helpers:
@@ -175,11 +173,17 @@ Low-level verification and sealed-message helpers:
 | `open`, `extract_message`, `extract_signature` | ML-DSA-87 attached-signature helpers |
 | `verify_sphincsplus_signature` | Verify detached SPHINCS+ signatures |
 | `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ attached-signature helpers |
-| `verify_dilithium_signature` | Verify detached legacy Dilithium signatures |
-| `sign_dilithium_with_secret_key` | Stateless legacy Dilithium secret-key signing (hedged by default) |
-| `sign_dilithium_with_secret_key_deterministic` | Deterministic-mode opt-in (KAT vector reproduction) |
-| `dilithium_open`, `dilithium_extract_message`, `dilithium_extract_signature` | Dilithium sealed-message helpers |
 | `verify_xmss`, `verify_xmss_with_custom_wots_param_w` | Verify lower-level XMSS signatures |
+
+### Key Encapsulation (ML-KEM-1024)
+
+ML-KEM-1024 (FIPS 203) is a standalone key-encapsulation primitive — **not** a signature scheme and not wired into the QRL wallet/address system. It is validated directly against the NIST ACVP vectors (keyGen, encapsulation, decapsulation, and key-check cases) and the C2SP/wycheproof + C2SP/CCTV corpora, and additionally cross-verified byte-for-byte against `go-qrllib`. See `.github/acvp/README.md` and `.github/wycheproof/README.md`.
+
+| API | Purpose |
+|-----|---------|
+| `DecapsulationKey` | Private key: `generate` (fresh randomness), `from_seed` (64-byte `d \|\| z`), `decapsulate`, `encapsulation_key`, `bytes`, `zeroize` |
+| `EncapsulationKey` | Public key: `from_bytes`, `encapsulate` (returns `(shared_key, ciphertext)`), `encapsulate_deterministic` (test-vector reproduction only), `bytes` |
+| `MLKEM1024_SEED_SIZE`, `MLKEM1024_SHARED_KEY_SIZE`, `MLKEM1024_CIPHERTEXT_SIZE`, `MLKEM1024_ENCAPSULATION_KEY_SIZE` | Size constants (64 / 32 / 1568 / 1568) |
 
 ### Common Types And Utilities
 
@@ -199,7 +203,7 @@ Low-level verification and sealed-message helpers:
 
 ### Hedged vs Deterministic Signing
 
-ML-DSA-87 and Dilithium are **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode and the TOB-QRLLIB-6 default (TOB-6 audit recommendation applied here for parity with `go-qrllib`):
+ML-DSA-87 is **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode and the TOB-QRLLIB-6 default (TOB-6 audit recommendation applied here for parity with `go-qrllib`):
 
 - **`sign` / `sign_attached`** (default) draw fresh `crypto/rand` randomness into the per-signature value on every call. Two signs of the same `(secret_key, [context,] message)` produce **distinct** signature bytes; both verify under the same public key. This frustrates fault-injection attacks against deterministic signing — an adversary who could differentiate two same-message signatures and recover `s1`/`s2` by lattice differential analysis no longer can. Verification is unchanged and existing verifiers are unaffected.
 - **`sign_deterministic` / `sign_attached_deterministic`** (FIPS 204 §3.5 opt-in) use a fixed all-zero per-signature value, so two signs of the same input yield byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT / cross-verification test-vector reproduction.
@@ -235,11 +239,11 @@ The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifica
 
 ### Keeping Secrets in Memory for the Minimum Time
 
-Every secret-bearing type (`Seed`, `ExtendedSeed`, `MlDsa87`, `Dilithium`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet`) implements `Drop` that zeroizes the backing buffer. You do not need to call `.zeroize()` explicitly for the happy-path — the value clears when it goes out of scope. Explicit `.zeroize()` remains available for long-lived signers that want to wipe their state mid-lifetime.
+Every secret-bearing type (`Seed`, `ExtendedSeed`, `MlDsa87`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet`) implements `Drop` that zeroizes the backing buffer. You do not need to call `.zeroize()` explicitly for the happy-path — the value clears when it goes out of scope. Explicit `.zeroize()` remains available for long-lived signers that want to wipe their state mid-lifetime.
 
 Owned-secret accessors (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies also clear on drop.
 
-If, after an explicit `.zeroize()`, you call `sign` or `seal` on a still-reachable signer, the library returns `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized` rather than producing a bogus signature from the all-zero key.
+If, after an explicit `.zeroize()`, you call `sign` or `seal` on a still-reachable signer, the library returns `QrllibError::MlDsaSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized` rather than producing a bogus signature from the all-zero key.
 
 ## WebAssembly API
 
@@ -282,21 +286,11 @@ Signing functions return a signature snapshot:
 
 ```ts
 type SignatureSnapshot = {
-  scheme: 'ml-dsa-87' | 'sphincsplus-256s' | 'legacy-xmss' | 'legacy-dilithium'
+  scheme: 'ml-dsa-87' | 'sphincsplus-256s' | 'legacy-xmss'
   signatureHex: string
   verified: boolean
   xmssIndex?: number | null
   xmssNextIndex?: number | null
-}
-```
-
-Legacy Dilithium generation/restoration returns:
-
-```ts
-type DilithiumSnapshot = {
-  scheme: 'legacy-dilithium'
-  seedHex: string
-  publicKeyHex: string
 }
 ```
 
@@ -312,8 +306,6 @@ The handle-based API accepts the extended seed (or parameters) **once**, stores 
 | `open_sphincsplus_wallet(extendedSeedHex)` | Restore a SPHINCS+-256s wallet, return a handle |
 | `create_legacy_xmss_wallet(height, hashFunction)` | Generate a fresh legacy XMSS wallet, return a handle |
 | `open_legacy_xmss_wallet(extendedSeedHex, index)` | Restore a legacy XMSS wallet at an explicit OTS index, return a handle |
-| `create_dilithium_signer()` | Generate a fresh legacy Dilithium signer, return a handle |
-| `open_dilithium_signer(seedHex)` | Restore a legacy Dilithium signer, return a handle |
 | `wallet_snapshot(handle)` | Return the wallet's snapshot JSON |
 | `wallet_sign(handle, message)` | Sign `message` with the wallet. Advances the OTS index for legacy-XMSS entries |
 | `close_wallet(handle)` | Remove the registry entry; `Drop` zeroizes the stored secret |
@@ -335,10 +327,6 @@ These entry points are retained for backwards compatibility. They re-decode the 
 | `sphincsplus_wallet_from_extended_seed_hex(extendedSeedHex)` | Restore a SPHINCS+-256s wallet snapshot |
 | `sign_sphincsplus_message(extendedSeedHex, message)` | Sign with SPHINCS+ wallet material |
 | `verify_sphincsplus_message(publicKeyHex, descriptorHex, message, signatureHex)` | Verify a SPHINCS+ wallet signature |
-| `generate_dilithium_signer()` | Generate a legacy Dilithium signer snapshot |
-| `dilithium_from_hex_seed(seedHex)` | Restore a legacy Dilithium signer snapshot |
-| `sign_dilithium_message(seedHex, message)` | Sign with legacy Dilithium seed material |
-| `verify_dilithium_message(publicKeyHex, message, signatureHex)` | Verify a legacy Dilithium signature |
 | `generate_xmss_wallet(height, hashFunction)` | Generate a legacy XMSS wallet snapshot |
 | `xmss_wallet_from_extended_seed_hex(extendedSeedHex, index)` | Restore an XMSS wallet snapshot at an explicit OTS index |
 | `sign_xmss_message(extendedSeedHex, index, message)` | Sign with legacy XMSS and return the next OTS index |
@@ -451,7 +439,7 @@ Additional CI coverage:
 
 - ML-DSA-87 is an in-repo Rust port of the `go-qrllib` implementation, not a wrapper around a packaged ML-DSA crate.
 - ML-DSA-87 ACVP vectors are pulled from NIST ACVP-Server at workflow runtime.
-- Dilithium, ML-DSA-87, SPHINCS+, and XMSS are cross-verified against external reference implementations.
+- ML-DSA-87, SPHINCS+, and XMSS are cross-verified against external reference implementations.
 - Rust and npm direct dependencies are exact-pinned, CI uses lockfile-enforced installs, and GitHub Actions are pinned by commit SHA.
 - `cargo audit` and `cargo deny` enforce supply-chain checks.
 

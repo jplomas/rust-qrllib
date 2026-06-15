@@ -53,3 +53,52 @@ jobs:
           WYCHEPROOF_VECTORS_DIR: /tmp/wycheproof/testvectors_v1
         run: |
           cargo test --locked --package qrllib --test wycheproof_mldsa -- --nocapture
+
+  mlkem1024-wycheproof:
+    name: ML-KEM-1024 Wycheproof / CCTV Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Clone C2SP/wycheproof (sparse)
+        run: |
+          git clone --depth 1 --no-checkout --filter=blob:none \
+            https://github.com/C2SP/wycheproof.git /tmp/wycheproof
+          cd /tmp/wycheproof
+          git sparse-checkout init --cone
+          git sparse-checkout set testvectors_v1
+          git checkout
+          echo "Wycheproof commit: $(git rev-parse --short HEAD)"
+          echo "Wycheproof date:   $(git log -1 --format=%ci)"
+          ls -la testvectors_v1/mlkem_1024_*.json
+
+      - name: Clone C2SP/CCTV (sparse) and decompress modulus corpus
+        run: |
+          # CCTV ships the exhaustive modulus-overflow encapsulation keys as a
+          # gzip; decompress to plain text so the Rust test needs no gzip dep.
+          git clone --depth 1 --no-checkout --filter=blob:none \
+            https://github.com/C2SP/CCTV.git /tmp/cctv
+          cd /tmp/cctv
+          git sparse-checkout init --cone
+          git sparse-checkout set ML-KEM
+          git checkout
+          echo "CCTV commit: $(git rev-parse --short HEAD)"
+          gunzip -kf ML-KEM/modulus/ML-KEM-1024.txt.gz
+          wc -l ML-KEM/modulus/ML-KEM-1024.txt
+
+      - name: Run Wycheproof + CCTV ML-KEM-1024 tests
+        env:
+          WYCHEPROOF_VECTORS_DIR: /tmp/wycheproof/testvectors_v1
+          CCTV_VECTORS_DIR: /tmp/cctv/ML-KEM
+        run: |
+          cargo test --locked --package qrllib --test wycheproof_mlkem -- --nocapture

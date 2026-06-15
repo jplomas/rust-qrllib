@@ -202,8 +202,9 @@ fn mldsa87_from_hex_seed_round_trips() {
             "signature from round-trip signer did not verify under original pk"
         );
 
-        // Hex-seed parser rejects malformed input.
-        assert!(matches!(MlDsa87::from_hex_seed("not-hex"), Err(QrllibError::Hex(_))));
+        // Hex-seed parser rejects malformed input with the sanitized sentinel
+        // (06-2026 audit fix: the error must not echo the offending input).
+        assert!(matches!(MlDsa87::from_hex_seed("not-hex"), Err(QrllibError::InvalidHexSeed)));
         assert!(matches!(
             MlDsa87::from_hex_seed("0x00"),
             Err(QrllibError::InvalidMlDsaSeedSize(_, _))

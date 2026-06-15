@@ -8,11 +8,6 @@ These tests verify that `rust-qrllib`'s signature implementations are interopera
 
 ## Tests
 
-### Dilithium (Round 3)
-- Reference: https://github.com/pq-crystals/dilithium @ commit `ac743d5`
-- Tests bidirectional signature verification
-- Key sizes: PK=2592, SK=4896, Sig=4595 bytes
-
 ### ML-DSA-87 (FIPS 204)
 - Reference: https://github.com/pq-crystals/dilithium (current master)
 - Tests bidirectional signature verification with context parameter
@@ -49,10 +44,6 @@ These tests verify that `rust-qrllib`'s signature implementations are interopera
 
 | File | Description |
 |------|-------------|
-| `../../crates/qrllib/examples/dilithium_sign.rs` | Generate `rust-qrllib` Dilithium signature |
-| `../../crates/qrllib/examples/dilithium_verify.rs` | Verify reference Dilithium signature with `rust-qrllib` |
-| `dilithium_sign_ref.c` | Generate pq-crystals Dilithium signature |
-| `dilithium_verify_ref.c` | Verify `rust-qrllib` Dilithium signature with pq-crystals |
 | `../../crates/qrllib/examples/mldsa87_sign.rs` | Generate `rust-qrllib` ML-DSA-87 signature |
 | `../../crates/qrllib/examples/mldsa87_verify.rs` | Verify reference ML-DSA-87 signature with `rust-qrllib` |
 | `mldsa87_sign_ref.c` | Generate pq-crystals ML-DSA-87 signature |
@@ -67,18 +58,6 @@ These tests verify that `rust-qrllib`'s signature implementations are interopera
 ## Running Locally
 
 ```bash
-# Dilithium
-git clone https://github.com/pq-crystals/dilithium.git /tmp/dilithium-ref
-cd /tmp/dilithium-ref && git checkout ac743d5
-cd /path/to/rust-qrllib
-cargo run -p qrllib --example dilithium_sign
-cd /tmp/dilithium-ref/ref
-gcc -DDILITHIUM_MODE=5 -I. -O2 -o /tmp/verify \
-    /path/to/rust-qrllib/.github/cross-verify/dilithium_verify_ref.c \
-    sign.c packing.c polyvec.c poly.c ntt.c reduce.c \
-    rounding.c symmetric-shake.c fips202.c randombytes.c
-/tmp/verify
-
 # ML-DSA-87
 git clone https://github.com/pq-crystals/dilithium.git /tmp/mldsa-ref
 cd /path/to/rust-qrllib
