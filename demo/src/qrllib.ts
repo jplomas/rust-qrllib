@@ -21,12 +21,6 @@ export type SignatureSnapshot = {
   xmssNextIndex?: number | null
 }
 
-export type DilithiumSnapshot = {
-  scheme: 'legacy-dilithium'
-  seedHex: string
-  publicKeyHex: string
-}
-
 type QrllibBindings = {
   default: (input?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module) => Promise<void>
   generate_wallet: () => WalletSnapshot
@@ -35,14 +29,6 @@ type QrllibBindings = {
   verify_message: (
     publicKeyHex: string,
     descriptorHex: string,
-    message: string,
-    signatureHex: string,
-  ) => boolean
-  generate_dilithium_signer: () => DilithiumSnapshot
-  dilithium_from_hex_seed: (seedHex: string) => DilithiumSnapshot
-  sign_dilithium_message: (seedHex: string, message: string) => SignatureSnapshot
-  verify_dilithium_message: (
-    publicKeyHex: string,
     message: string,
     signatureHex: string,
   ) => boolean
