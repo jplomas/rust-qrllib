@@ -17,7 +17,7 @@ jobs:
   release-pr:
     name: Release PR
     runs-on: ubuntu-latest
-    if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
+    if: (github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib') && vars.RELEASE_ENABLED == 'true'
     permissions:
       contents: write       # release-plz commits version bumps and updated CHANGELOG.md to the release branch
       pull-requests: write  # release-plz opens the release PR
@@ -50,7 +50,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
+    if: (github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib') && vars.RELEASE_ENABLED == 'true'
     permissions:
       contents: write       # release-plz creates the git tag + GitHub release
       pull-requests: read   # release-plz reads PR labels to decide release notes
