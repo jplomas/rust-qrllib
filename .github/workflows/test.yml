@@ -71,7 +71,7 @@ jobs:
         run: cargo llvm-cov --locked --package qrllib --lcov --output-path lcov.info
 
       - name: Filter ignored code from coverage
-        uses: jplomas/ignore-cov@8cdab37c9188e4ccd0dde928d19f67bfef07f772 # v1
+        uses: jplomas/ignore-cov@b866fc4861b843343c7c03f326faa56dbc0be585 # v1
         with:
           file: lcov.info
           require-reason: 'true'

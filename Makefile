@@ -4,7 +4,7 @@
 # `//coverage:ignore reason=...` directive and are stripped from the lcov report
 # (via jplomas/ignore-cov) before it is reported/gated, so coverage measures
 # 100% of *testable* code. CI runs the pinned GitHub Action; locally install:
-#   cargo install --git https://github.com/jplomas/ignore-cov --rev 8cdab37c9188e4ccd0dde928d19f67bfef07f772
+#   cargo install --git https://github.com/jplomas/ignore-cov --rev b866fc4861b843343c7c03f326faa56dbc0be585
 .PHONY: test coverage coverage-html lint
 
 test:
@@ -12,7 +12,7 @@ test:
 
 coverage:
 	cargo llvm-cov --locked --package qrllib --lcov --output-path lcov.info
-	@ignore-cov --file lcov.info --require-reason || { echo ">>> install ignore-cov: cargo install --git https://github.com/jplomas/ignore-cov --rev 8cdab37c9188e4ccd0dde928d19f67bfef07f772"; exit 1; }
+	@ignore-cov --file lcov.info --require-reason || { echo ">>> install ignore-cov: cargo install --git https://github.com/jplomas/ignore-cov --rev b866fc4861b843343c7c03f326faa56dbc0be585"; exit 1; }
 	@python3 -c "import sys; d=open('lcov.info').read().splitlines(); \
 	lf=sum(int(l[3:]) for l in d if l.startswith('LF:')); \
 	lh=sum(int(l[3:]) for l in d if l.startswith('LH:')); \
