@@ -30,11 +30,21 @@ use zeroize::Zeroizing;
 /// low-level [`MlDsa87`] signer skips this binding; that is correct
 /// behaviour for application-supplied contexts but means the caller
 /// owns context discipline themselves.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MlDsa87Wallet {
     descriptor: Descriptor,
     signer: MlDsa87,
     seed: Seed,
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): the wallet owns the seed and signer
+// secret key. The descriptor is public and safe to surface.
+impl core::fmt::Debug for MlDsa87Wallet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MlDsa87Wallet")
+            .field("descriptor", &self.descriptor)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn verify_mldsa87_wallet_signature(

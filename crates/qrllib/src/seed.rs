@@ -5,17 +5,60 @@ use crate::{
 };
 use sha2::Digest;
 use shake::Shake256;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct Seed([u8; SEED_SIZE]);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct ExtendedSeed([u8; EXTENDED_SEED_SIZE]);
 
 fn trim_hex_prefix(value: &str) -> &str {
     value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value)
 }
+
+/// Constant-time byte-slice equality (CIPH-RUSTQRL-9). Compares in time
+/// independent of the position of the first differing byte, so equality checks
+/// on secret seed material do not leak a prefix-match length via timing. The
+/// slices always have equal (compile-time-fixed) length here.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), b.len());
+    let mut diff = 0_u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): the wrapped bytes are secret seed
+// material and must never reach a log line via `{:?}`.
+impl core::fmt::Debug for Seed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Seed").finish_non_exhaustive()
+    }
+}
+
+impl core::fmt::Debug for ExtendedSeed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExtendedSeed").finish_non_exhaustive()
+    }
+}
+
+// Constant-time equality on secret material (CIPH-RUSTQRL-9) in place of the
+// short-circuiting derived `PartialEq`.
+impl PartialEq for Seed {
+    fn eq(&self, other: &Self) -> bool {
+        ct_eq(&self.0, &other.0)
+    }
+}
+impl Eq for Seed {}
+
+impl PartialEq for ExtendedSeed {
+    fn eq(&self, other: &Self) -> bool {
+        ct_eq(&self.0, &other.0)
+    }
+}
+impl Eq for ExtendedSeed {}
 
 impl Seed {
     pub fn generate() -> Result<Self> {
@@ -35,7 +78,14 @@ impl Seed {
     }
 
     pub fn from_hex(value: &str) -> Result<Self> {
-        let bytes = hex::decode(trim_hex_prefix(value))?;
+        // Map the decode failure to the sanitized sentinel rather than
+        // propagating `hex::FromHexError`, whose Display echoes the offending
+        // input character — the input is secret seed material (CIPH-RUSTQRL-3).
+        // Wrap the decoded buffer in `Zeroizing` so the transient secret seed is
+        // wiped on drop (CIPH-RUSTQRL-2 / go CIPH-QRLLIB-4).
+        let bytes = Zeroizing::new(
+            hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?,
+        );
         Self::from_bytes(&bytes)
     }
 
@@ -53,13 +103,16 @@ impl Seed {
         hasher.finalize().into()
     }
 
-    pub fn shake256(&self, size: usize) -> Vec<u8> {
+    /// Returns a zeroizing SHAKE-256 expansion of the seed. The output is
+    /// secret-derived key material (CIPH-RUSTQRL-2), so it drop-clears on
+    /// scope exit rather than being left in a plain `Vec`.
+    pub fn shake256(&self, size: usize) -> Zeroizing<Vec<u8>> {
         use sha3::digest::{ExtendableOutput, Update, XofReader};
 
         let mut hasher = Shake256::default();
         hasher.update(self.0.as_slice());
         let mut reader = hasher.finalize_xof();
-        let mut output = vec![0_u8; size];
+        let mut output = Zeroizing::new(vec![0_u8; size]);
         reader.read(&mut output);
         output
     }
@@ -99,7 +152,12 @@ impl ExtendedSeed {
     }
 
     pub fn from_hex(value: &str) -> Result<Self> {
-        let bytes = hex::decode(trim_hex_prefix(value))?;
+        // Sanitized sentinel rather than the echoing `hex::FromHexError` — the
+        // extended seed embeds secret seed material (CIPH-RUSTQRL-3). The decoded
+        // buffer is wiped on drop (CIPH-RUSTQRL-2 / go CIPH-QRLLIB-4).
+        let bytes = Zeroizing::new(
+            hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?,
+        );
         Self::from_bytes(&bytes)
     }
 

@@ -54,17 +54,28 @@ const SPX_ADDR_TYPE_FORSPK: u32 = 4;
 const SPX_ADDR_TYPE_WOTSPRF: u32 = 5;
 const SPX_ADDR_TYPE_FORSPRF: u32 = 6;
 
-#[derive(Clone, Debug)]
+// CIPH-RUSTQRL-1: this internal context owns the SPHINCS+ `sk_seed`. It
+// deliberately does **not** derive/implement `Debug`, so it cannot be printed
+// via `{:?}` and cannot leak secret material.
+#[derive(Clone)]
 struct SPXCtx {
     pub_seed: [u8; SPHINCS_PLUS_256S_N],
     sk_seed: [u8; SPHINCS_PLUS_256S_N],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SphincsPlus256s {
     pk: [u8; SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE],
     sk: [u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE],
     seed: [u8; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE],
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): this type owns the packed secret key and
+// crypto seed; a derived `Debug` would print them verbatim.
+impl core::fmt::Debug for SphincsPlus256s {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SphincsPlus256s").finish_non_exhaustive()
+    }
 }
 
 struct ForsGenLeafInfo {
@@ -466,7 +477,8 @@ fn fors_gen_leaf_x1(leaf: &mut [u8], ctx: &SPXCtx, addr_idx: u32, info: &mut For
     set_type(fors_leaf_addr, SPX_ADDR_TYPE_FORSPRF);
     fors_gen_sk(leaf, ctx, fors_leaf_addr);
     set_type(fors_leaf_addr, SPX_ADDR_TYPE_FORSTREE);
-    let current = leaf.to_vec();
+    // CIPH-RUSTQRL-2: the FORS leaf secret key is copied here; wipe on drop.
+    let current = Zeroizing::new(leaf.to_vec());
     fors_sk_to_leaf(leaf, &current, ctx, fors_leaf_addr);
 }
 
@@ -612,7 +624,8 @@ fn wots_gen_leaf_x1(dest: &mut [u8], ctx: &SPXCtx, leaf_idx: u32, info: &mut Lea
                 break;
             }
             set_hash_addr(leaf_addr, u32::from(hash_index));
-            let current = chain.to_vec();
+            // CIPH-RUSTQRL-2: the WOTS+ chain value is secret-derived; wipe on drop.
+            let current = Zeroizing::new(chain.to_vec());
             t_hash(chain, &current, 1, ctx, leaf_addr);
         }
     }
@@ -933,7 +946,10 @@ impl SphincsPlus256s {
         // Map the decode failure to the sanitized sentinel rather than
         // propagating `hex::FromHexError`, whose Display echoes the offending
         // input character — the input is secret seed material (06-2026 audit fix).
-        let bytes = hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?;
+        // CIPH-RUSTQRL-2: the decoded buffer is secret seed material; wipe on drop.
+        let bytes = Zeroizing::new(
+            hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?,
+        );
         if bytes.len() != SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE {
             return Err(QrllibError::InvalidSphincsSeedSize(
                 bytes.len(),

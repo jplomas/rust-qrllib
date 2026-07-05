@@ -1047,13 +1047,20 @@ fn decapsulate(
     // If the re-encryption matches, replace the implicit-rejection key with the
     // real shared key G(m || H(ek))[:32]. Constant-time; data-independent wipes
     // below add no timing side channel.
-    let matches = ct_eq_mask(ct.as_slice(), &c);
+    //
+    // CIPH-RUSTQRL-7: route the comparison mask through `black_box` so the
+    // optimizer cannot prove a relationship between `matches` and `ct`/`c` and
+    // lower the branch-free `ct_select` back into a secret-dependent branch.
+    let matches = core::hint::black_box(ct_eq_mask(ct.as_slice(), &c));
     ct_select(matches, &mut k_out, &g[..MLKEM1024_SHARED_KEY_SIZE]);
 
     m.zeroize();
     g_input.zeroize();
     g.zeroize();
     r.zeroize();
+    // CIPH-RUSTQRL-2: wipe the re-encryption buffer, which is derived from the
+    // recovered message `m` and the secret decryption path.
+    c.zeroize();
 
     Zeroizing::new(k_out)
 }

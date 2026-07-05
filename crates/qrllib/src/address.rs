@@ -21,6 +21,16 @@ const _: () = assert!(ADDRESS_SIZE <= 64);
 /// the shape check and returns an error on mismatch. For that reason the
 /// symbol is reachable only via the module path (`qrllib::address::unsafe_get_address`)
 /// and is not re-exported from the crate root.
+///
+/// # Bypasses the wallet issuance gate (CIPH-RUSTQRL-6)
+///
+/// This function derives an address purely from bytes and does **not** consult
+/// [`crate::wallet_type::WalletType::is_issuable`]. Combined with the raw
+/// [`crate::sphincsplus::SphincsPlus256s`] primitive it can therefore mint
+/// SPHINCS+/SLH-DSA addresses even though the wallet layer treats SPHINCS+ as
+/// non-issuable by default. Callers that need the issuance gate enforced must go
+/// through the wallet constructors (`SphincsPlus256sWallet::*`), which check the
+/// gate before any address is produced.
 pub fn unsafe_get_address(public_key: &[u8], descriptor: Descriptor) -> [u8; ADDRESS_SIZE] {
     use sha3::digest::{ExtendableOutput, Update, XofReader};
 

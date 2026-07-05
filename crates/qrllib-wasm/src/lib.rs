@@ -1,7 +1,7 @@
 use qrllib::{
     Descriptor, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE, LEGACY_XMSS_EXTENDED_SEED_SIZE,
-    LegacyXmssWallet, MlDsa87Wallet, QrllibError, SphincsPlus256sWallet, XmssHashFunction,
-    XmssHeight, verify_legacy_xmss, verify_mldsa87_wallet_signature,
+    LegacyXmssWallet, MlDsa87Wallet, QrlDescriptor, QrllibError, SphincsPlus256sWallet,
+    XmssHashFunction, XmssHeight, verify_legacy_xmss, verify_mldsa87_wallet_signature,
     verify_sphincsplus_wallet_signature,
 };
 use serde::Serialize;
@@ -105,6 +105,35 @@ fn xmss_hash_function_name(hash_function: XmssHashFunction) -> &'static str {
     }
 }
 
+/// Maximum XMSS tree height accepted by the browser-reachable entry points
+/// (CIPH-RUSTQRL-5). Constructing or opening an XMSS wallet builds the full
+/// Merkle tree — `2^height` WOTS+ key generations — which for large heights
+/// saturates the single wasm thread and hangs the tab. The core library permits
+/// up to `XMSS_MAX_HEIGHT` (30) to match go-qrllib, but real QRL legacy heights
+/// are small (<= 18), so browser callers are capped well below the maximum.
+/// Verification of existing signatures / addresses is unaffected — only wallet
+/// construction is gated here.
+const WASM_MAX_XMSS_HEIGHT: u8 = 18;
+
+const XMSS_HEIGHT_TOO_LARGE_MSG: &str =
+    "XMSS height exceeds the browser maximum of 18; build large trees with the native library";
+
+/// The security-relevant cap decision (CIPH-RUSTQRL-5), factored out as a pure
+/// predicate so it is unit-testable on the native target without constructing a
+/// `JsValue` (which aborts outside a JS runtime).
+const fn exceeds_browser_xmss_cap(height: u8) -> bool {
+    height > WASM_MAX_XMSS_HEIGHT
+}
+
+/// Validate a caller-supplied height against both the browser cap
+/// (CIPH-RUSTQRL-5) and the core `XmssHeight` validity rules.
+fn checked_xmss_height(height: u8) -> Result<XmssHeight, JsValue> {
+    if exceeds_browser_xmss_cap(height) {
+        return Err(JsValue::from_str(XMSS_HEIGHT_TOO_LARGE_MSG));
+    }
+    XmssHeight::new(height).map_err(to_js_error)
+}
+
 fn parse_xmss_hash_function(value: &str) -> Result<XmssHashFunction, JsValue> {
     match value {
         "sha2_256" => Ok(XmssHashFunction::Sha2_256),
@@ -179,6 +208,16 @@ fn xmss_wallet_from_hex_seed(
 
     let mut extended_seed = [0_u8; LEGACY_XMSS_EXTENDED_SEED_SIZE];
     extended_seed.copy_from_slice(&bytes);
+
+    // CIPH-RUSTQRL-5: the tree height is encoded in the caller-supplied
+    // descriptor. Reject an out-of-range height BEFORE `new_from_extended_seed`
+    // builds the (up to 2^height) Merkle tree, so a crafted extended seed cannot
+    // hang the wasm thread.
+    let descriptor = QrlDescriptor::from_extended_seed(&extended_seed).map_err(to_js_error)?;
+    if exceeds_browser_xmss_cap(descriptor.height().as_u8()) {
+        return Err(JsValue::from_str(XMSS_HEIGHT_TOO_LARGE_MSG));
+    }
+
     let mut wallet =
         LegacyXmssWallet::new_from_extended_seed(extended_seed).map_err(to_js_error)?;
     wallet.set_index(index).map_err(to_js_error)?;
@@ -291,7 +330,7 @@ pub fn verify_sphincsplus_message(
 #[wasm_bindgen]
 pub fn generate_xmss_wallet(height: u8, hash_function: String) -> Result<JsValue, JsValue> {
     let wallet = LegacyXmssWallet::new(
-        XmssHeight::new(height).map_err(to_js_error)?,
+        checked_xmss_height(height)?,
         parse_xmss_hash_function(&hash_function)?,
     )
     .map_err(to_js_error)?;
@@ -389,7 +428,7 @@ pub fn open_sphincsplus_wallet(extended_seed_hex: String) -> Result<u32, JsValue
 #[wasm_bindgen]
 pub fn create_legacy_xmss_wallet(height: u8, hash_function: String) -> Result<u32, JsValue> {
     let wallet = LegacyXmssWallet::new(
-        XmssHeight::new(height).map_err(to_js_error)?,
+        checked_xmss_height(height)?,
         parse_xmss_hash_function(&hash_function)?,
     )
     .map_err(to_js_error)?;
@@ -545,5 +584,23 @@ mod tests {
             assert_ne!(handle, 0);
             WALLET_REGISTRY.with(|registry| registry.borrow_mut().remove(&handle));
         }
+    }
+
+    #[test]
+    fn browser_xmss_height_is_capped() {
+        // CIPH-RUSTQRL-5: heights above the browser cap are rejected before any
+        // (2^height) Merkle tree is built. We test the pure cap predicate here;
+        // the `JsValue`-returning wrappers cannot run outside a JS runtime.
+        use super::{WASM_MAX_XMSS_HEIGHT, exceeds_browser_xmss_cap};
+
+        assert!(exceeds_browser_xmss_cap(WASM_MAX_XMSS_HEIGHT + 2));
+        assert!(exceeds_browser_xmss_cap(30));
+        assert!(!exceeds_browser_xmss_cap(WASM_MAX_XMSS_HEIGHT));
+        assert!(!exceeds_browser_xmss_cap(4));
+
+        // Odd heights are rejected by the core `XmssHeight` validity rules that
+        // `checked_xmss_height` also applies once the cap check passes.
+        assert!(qrllib::XmssHeight::new(3).is_err());
+        assert!(qrllib::XmssHeight::new(WASM_MAX_XMSS_HEIGHT).is_ok());
     }
 }

@@ -128,7 +128,6 @@ struct BdsState {
 /// - rotating keys well before the tree is exhausted.
 ///
 /// See `SECURITY.md` for the full threat model.
-#[derive(Debug)]
 pub struct Xmss {
     xmss_params: XmssParams,
     hash_function: XmssHashFunction,
@@ -136,6 +135,19 @@ pub struct Xmss {
     seed: Vec<u8>,
     sk: Vec<u8>,
     bds_state: BdsState,
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): `seed` and `sk` (which also carries the
+// advancing OTS index) are secret material. Height and hash function are public
+// and safe to surface for diagnostics; the secret buffers are omitted.
+impl core::fmt::Debug for Xmss {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Xmss")
+            .field("height", &self.height)
+            .field("hash_function", &self.hash_function)
+            .field("index", &self.index())
+            .finish_non_exhaustive()
+    }
 }
 
 impl TryFrom<u8> for XmssHashFunction {
@@ -301,6 +313,55 @@ impl Xmss {
         // would have stored the 48-byte caller-supplied seed instead.
         // Either way, `seed()` round-trips for the consumer.
         Ok(Self { xmss_params, hash_function, height, seed: expanded_seed.to_vec(), sk, bds_state })
+    }
+
+    /// Reconstruct an XMSS signer from persisted secret-key bytes, **restoring
+    /// the one-time-signature index from that state** rather than resetting it
+    /// to zero (CIPH-RUSTQRL-4).
+    ///
+    /// The canonical persistence pattern is: after each [`Xmss::sign`], store
+    /// [`Xmss::secret_key`] (whose leading four bytes encode the current OTS
+    /// index). On restart, call `from_secret_key` with those bytes to obtain a
+    /// signer positioned at the persisted high-water index, so signing resumes
+    /// at the next unused leaf. This removes the footgun in the seed-based
+    /// constructors, which unconditionally re-derive a fresh tree at index 0
+    /// and therefore require a separate [`Xmss::set_index`] restore step that,
+    /// if forgotten, silently reuses already-spent OTS keys — an irreversible
+    /// tree-wide compromise (see the [`Xmss`] type docs and `SECURITY.md`).
+    ///
+    /// `secret_key` must be exactly [`XMSS_SECRET_KEY_SIZE`] (132) bytes: a
+    /// 4-byte big-endian index followed by the 96-byte expanded seed
+    /// (`SK_SEED || SK_PRF || PUB_SEED`) and the derived root / pub-seed region.
+    pub fn from_secret_key(
+        height: XmssHeight,
+        hash_function: XmssHashFunction,
+        secret_key: &[u8],
+    ) -> Result<Self> {
+        if secret_key.len() != XMSS_SECRET_KEY_SIZE {
+            return Err(QrllibError::InvalidXmssKeyLength(secret_key.len()));
+        }
+
+        let index = read_index(secret_key);
+        let mut expanded_seed = [0_u8; 96];
+        expanded_seed.copy_from_slice(&secret_key[OFFSET_SK_SEED..OFFSET_SK_SEED + 96]);
+
+        // Rebuild the tree and its BDS state from the expanded seed (reproducing
+        // the original public key), then fast-forward the BDS state to the
+        // persisted index so the next `sign` uses the correct unused leaf.
+        //
+        // Coverage: the `?` error arm is unreachable — a validated `XmssHeight`
+        // is always even, so `initialize_tree_from_expanded_seed` cannot fail
+        // here. Kept to surface internal-invariant violations. The
+        // `set_index` error below IS reachable (a crafted out-of-range index).
+        let mut tree = Self::initialize_tree_from_expanded_seed(
+            height,
+            hash_function,
+            &expanded_seed,
+            //coverage:ignore reason=defensively-unreachable
+        )?;
+        expanded_seed.zeroize();
+        tree.set_index(index)?;
+        Ok(tree)
     }
 
     /// Returns a zeroizing copy of the XMSS seed. The returned value
@@ -1055,14 +1116,17 @@ fn xmss_fast_gen_key_pair(
     // and the `rfc8391` interop module.
     let mut expanded_seed = [0_u8; 96];
     shake256(&mut expanded_seed, seed);
-    xmss_fast_gen_key_pair_from_expanded_seed(
+    let result = xmss_fast_gen_key_pair_from_expanded_seed(
         hash_function,
         xmss_params,
         public_key,
         secret_key,
         bds_state,
         &expanded_seed,
-    )
+    );
+    // CIPH-RUSTQRL-2: wipe the expanded (SK_SEED || SK_PRF || PUB_SEED) buffer.
+    expanded_seed.zeroize();
+    result
 }
 
 /// Shared keypair-derivation core for the QRL XMSS construction. Takes
@@ -1133,17 +1197,20 @@ fn xmss_fast_sign_message(
 
     let idx = read_index(secret_key);
 
-    let sk_seed = secret_key[4..4 + n].to_vec();
-    let sk_prf = secret_key[4 + n..4 + 2 * n].to_vec();
+    // CIPH-RUSTQRL-2: secret-derived intermediates wrapped in `Zeroizing` so
+    // they drop-clear on every exit path (including the `?` on `h_msg` below).
+    // `public_seed` is public and left as a plain `Vec`.
+    let sk_seed = Zeroizing::new(secret_key[4..4 + n].to_vec());
+    let sk_prf = Zeroizing::new(secret_key[4 + n..4 + 2 * n].to_vec());
     let public_seed = secret_key[4 + 2 * n..4 + 3 * n].to_vec();
 
     let mut idx_bytes_32 = [0_u8; 32];
     to_byte_big_endian(&mut idx_bytes_32, idx, 32);
 
-    let mut hash_key = vec![0_u8; 3 * n];
+    let mut hash_key = Zeroizing::new(vec![0_u8; 3 * n]);
     write_index(secret_key, idx + 1);
 
-    let mut r = vec![0_u8; n];
+    let mut r = Zeroizing::new(vec![0_u8; n]);
     let mut ots_address = [0_u32; 8];
     prf(hash_function, &mut r, &idx_bytes_32, &sk_prf, n as u32);
     hash_key[..n].copy_from_slice(&r);
@@ -1163,7 +1230,7 @@ fn xmss_fast_sign_message(
     set_type(&mut ots_address, 0);
     set_ots_address(&mut ots_address, idx);
 
-    let mut ots_seed = vec![0_u8; n];
+    let mut ots_seed = Zeroizing::new(vec![0_u8; n]);
     get_seed(hash_function, &mut ots_seed, &sk_seed, params.n, &mut ots_address);
 
     let mut signature_offset = 4 + n;
@@ -1213,7 +1280,8 @@ fn xmss_fast_update(
         return Err(QrllibError::XmssOtsIndexRewind);
     }
 
-    let sk_seed = secret_key[4..4 + params.n as usize].to_vec();
+    // CIPH-RUSTQRL-2: `sk_seed` is secret; `public_seed` is public.
+    let sk_seed = Zeroizing::new(secret_key[4..4 + params.n as usize].to_vec());
     let public_seed = secret_key[OFFSET_PUB_SEED..OFFSET_PUB_SEED + params.n as usize].to_vec();
     let mut ots_address = [0_u32; 8];
 
