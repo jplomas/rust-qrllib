@@ -55,6 +55,19 @@ fn secret_bearing_debug_is_redacted() {
 
     for (rendered, type_name) in cases {
         assert!(rendered.contains(type_name), "debug output should name the type: {rendered}");
+        // `finish_non_exhaustive` always emits the `..` elision marker, and a
+        // redacted struct stays small. A derived `Debug` that dumped the secret
+        // byte arrays would omit `..` and run to tens of thousands of chars.
+        // Together these prove redaction even for the wallet fixtures, whose
+        // secret keys are KDF-derived and so never contain `SECRET_MARK`
+        // literally (the weaker substring check alone would not catch a leak
+        // there).
+        assert!(rendered.contains(".."), "debug output must elide fields: {rendered}");
+        assert!(
+            rendered.len() < 512,
+            "debug output for {type_name} is too large to be redacted ({} bytes): {rendered}",
+            rendered.len()
+        );
         assert!(
             !rendered.contains(SECRET_MARK),
             "debug output for {type_name} leaked secret bytes: {rendered}"

@@ -21,13 +21,18 @@ fn trim_hex_prefix(value: &str) -> &str {
 /// independent of the position of the first differing byte, so equality checks
 /// on secret seed material do not leak a prefix-match length via timing. The
 /// slices always have equal (compile-time-fixed) length here.
+///
+/// The accumulated `diff` is passed through `core::hint::black_box` before the
+/// comparison so the optimizer cannot prove a relationship between the inputs
+/// and short-circuit the accumulation loop into an early-exit compare — the same
+/// barrier used for the ML-KEM constant-time select (CIPH-RUSTQRL-7).
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     debug_assert_eq!(a.len(), b.len());
     let mut diff = 0_u8;
     for (x, y) in a.iter().zip(b.iter()) {
         diff |= x ^ y;
     }
-    diff == 0
+    core::hint::black_box(diff) == 0
 }
 
 // Redacting `Debug` (CIPH-RUSTQRL-1): the wrapped bytes are secret seed

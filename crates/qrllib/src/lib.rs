@@ -50,7 +50,12 @@ pub use sphincsplus::{
 };
 pub use sphincsplus_wallet::{SphincsPlus256sWallet, verify_sphincsplus_wallet_signature};
 pub use wallet::{MlDsa87Wallet, verify_mldsa87_wallet_signature};
-pub use wallet_type::{WalletType, enable_experimental_sphincsplus_issuance_for_testing};
+pub use wallet_type::WalletType;
+// CIPH-RUSTQRL-6 / go-qrllib CIPH-QRLLIB-2: the process-wide issuance bypass is
+// only linkable in debug builds or under the explicit opt-in feature, never from
+// a default release/production build.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
+pub use wallet_type::enable_experimental_sphincsplus_issuance_for_testing;
 pub use xmss::{
     XMSS_MAX_HEIGHT, XMSS_PUBLIC_KEY_SIZE, XMSS_SECRET_KEY_SIZE, XMSS_SEED_SIZE, XMSS_WOTS_PARAM_K,
     XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_W, Xmss, XmssHashFunction, XmssHeight,

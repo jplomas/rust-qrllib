@@ -330,8 +330,17 @@ impl Xmss {
     /// tree-wide compromise (see the [`Xmss`] type docs and `SECURITY.md`).
     ///
     /// `secret_key` must be exactly [`XMSS_SECRET_KEY_SIZE`] (132) bytes: a
-    /// 4-byte big-endian index followed by the 96-byte expanded seed
-    /// (`SK_SEED || SK_PRF || PUB_SEED`) and the derived root / pub-seed region.
+    /// 4-byte big-endian index, followed by the 96-byte expanded seed
+    /// (`SK_SEED || SK_PRF || PUB_SEED`), followed by the derived 32-byte
+    /// Merkle root.
+    ///
+    /// # Restore cost
+    ///
+    /// Reconstruction rebuilds the tree at index 0 and then fast-forwards the
+    /// BDS state to the persisted index, replaying one BDS update per skipped
+    /// leaf — so restoration is `O(index)`. Restoring a long-lived, heavily used
+    /// tree whose index is near `2^height` can therefore take noticeably longer
+    /// than generating a fresh one; budget for that latency on the restore path.
     pub fn from_secret_key(
         height: XmssHeight,
         hash_function: XmssHashFunction,

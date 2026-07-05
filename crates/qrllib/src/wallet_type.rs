@@ -13,18 +13,24 @@ use crate::{
 static SPHINCSPLUS_ISSUANCE_BYPASS: AtomicBool = AtomicBool::new(false);
 
 /// Enable SPHINCS+/SLH-DSA wallet issuance for the lifetime of the
-/// current process. Intended for **test harnesses, examples, and
-/// developer experimentation** — production code that wants to enable
-/// SPHINCS+ wallets should compile with the
-/// `experimental-sphincsplus-issuance` Cargo feature instead, which
-/// expresses the opt-in at the build-system level rather than via a
-/// process-wide mutable flag.
+/// current process. Intended for **test harnesses and developer
+/// experimentation**.
 ///
-/// Cargo integration-tests under `tests/` are compiled as downstream
-/// consumers of `qrllib` — they do **not** inherit qrllib's `cfg(test)`
-/// scope, so the `cfg(any(test, feature = "..."))` gate in
-/// [`WalletType::is_issuable`] sees the test build as a production
-/// build. The intended pattern for those tests is:
+/// # Availability (CIPH-RUSTQRL-6 / go-qrllib CIPH-QRLLIB-2)
+///
+/// This helper is compiled **only** into debug builds (`debug_assertions`)
+/// or builds that enable the `experimental-sphincsplus-issuance` Cargo
+/// feature. It is **absent from a default release/production build**, so
+/// production code cannot link it and cannot flip the process-wide issuance
+/// bypass. Production code that deliberately wants SPHINCS+ issuance must
+/// opt in with the `experimental-sphincsplus-issuance` feature, which sets
+/// the gate at the build-system level and does not need this helper.
+///
+/// Cargo integration tests under `tests/` are downstream consumers that do
+/// **not** inherit qrllib's `cfg(test)` scope, so the
+/// `cfg(any(test, feature = "..."))` arm in [`WalletType::is_issuable`]
+/// treats them as production; they run in debug and therefore still see this
+/// helper. The intended pattern is:
 ///
 /// ```ignore
 /// use qrllib::enable_experimental_sphincsplus_issuance_for_testing;
@@ -39,6 +45,7 @@ static SPHINCSPLUS_ISSUANCE_BYPASS: AtomicBool = AtomicBool::new(false);
 /// Once called, the bypass cannot be disabled within the same
 /// process — this is intentional so a misuse cannot accidentally undo
 /// a deliberate enable elsewhere in the process.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
 pub fn enable_experimental_sphincsplus_issuance_for_testing() {
     SPHINCSPLUS_ISSUANCE_BYPASS.store(true, Ordering::Relaxed);
 }
