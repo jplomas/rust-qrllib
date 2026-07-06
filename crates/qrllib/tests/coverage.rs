@@ -77,7 +77,7 @@ fn seed_extended_seed_and_mnemonic_helpers_cover_round_trips() {
 
     let mnemonic = bin_to_mnemonic(extended_seed.as_bytes()).expect("mnemonic");
     let mnemonic_bytes = mnemonic_to_bin(&mnemonic).expect("mnemonic to bin");
-    assert_eq!(mnemonic_bytes, extended_seed.as_bytes());
+    assert_eq!(mnemonic_bytes.as_slice(), extended_seed.as_bytes().as_slice());
     assert!(mnemonic_to_bin("aback invalid").is_err());
     assert!(bin_to_mnemonic(&[1_u8]).is_err());
 

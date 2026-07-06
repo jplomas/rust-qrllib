@@ -1,4 +1,4 @@
-use crate::wallet_type::WalletType;
+use crate::{wallet_type::WalletType, xmss::XmssHashFunction};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QrllibError {
@@ -83,6 +83,11 @@ pub enum QrllibError {
 
     #[error("invalid XMSS hash function: {0}")]
     InvalidXmssHashFunction(u8),
+
+    #[error(
+        "XMSS hash function {0} is retained for legacy address recovery only and cannot be used to create a new wallet; use SHAKE_256 or SHA2_256 (go-qrllib CIPH-QRLLIB-3)"
+    )]
+    LegacyXmssHashNotIssuable(XmssHashFunction),
 
     #[error("invalid XMSS height: {0}")]
     InvalidXmssHeight(u8),

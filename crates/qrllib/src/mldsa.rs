@@ -86,11 +86,21 @@ impl Default for PolyVecL {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MlDsa87 {
     public_key: [u8; ML_DSA_87_PUBLIC_KEY_SIZE],
     secret_key: [u8; ML_DSA_87_SECRET_KEY_SIZE],
     seed: [u8; ML_DSA_87_CRYPTO_SEED_SIZE],
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): this type owns the secret key and crypto
+// seed. A derived `Debug` would print those bytes verbatim, so an accidental
+// `{:?}` / log statement in a downstream consumer would dump the master secret.
+// `finish_non_exhaustive` emits `MlDsa87 { .. }` with no field contents.
+impl core::fmt::Debug for MlDsa87 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MlDsa87").finish_non_exhaustive()
+    }
 }
 
 pub fn extract_message(signature_message: &[u8]) -> Option<&[u8]> {
@@ -1321,6 +1331,14 @@ fn crypto_sign_signature(
     zero_poly_vec_l(&mut s1);
     zero_poly_vec_k(&mut s2);
     zero_poly_vec_k(&mut t0);
+    // CIPH-RUSTQRL-2: also wipe the secret-derived masking/response
+    // intermediates. The mask `y` is key-equivalent — with the published
+    // response `z = y + c·s1` and the public challenge `c`, knowledge of `y`
+    // recovers `s1`. `z`/`w0`/`hints` likewise carry secret-derived material.
+    zero_poly_vec_l(&mut y);
+    zero_poly_vec_l(&mut z);
+    zero_poly_vec_k(&mut w0);
+    zero_poly_vec_k(&mut hints);
 
     result
 }

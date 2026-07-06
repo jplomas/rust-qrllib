@@ -13,7 +13,7 @@ use crate::{
     },
     wallet_type::WalletType,
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// QRL V2.0 SPHINCS+-256s wallet.
 ///
@@ -31,11 +31,21 @@ use zeroize::Zeroizing;
 /// [`SphincsPlus256sWallet::sign`] prepends it from the wallet's own
 /// descriptor, and [`verify_sphincsplus_wallet_signature`] prepends it
 /// from the `descriptor` argument it receives.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SphincsPlus256sWallet {
     descriptor: Descriptor,
     signer: SphincsPlus256s,
     seed: Seed,
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): the wallet owns the seed and signer
+// secret key. The descriptor is public and safe to surface.
+impl core::fmt::Debug for SphincsPlus256sWallet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SphincsPlus256sWallet")
+            .field("descriptor", &self.descriptor)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Prepend the fixed-length signing context to the message so SPHINCS+
@@ -101,10 +111,14 @@ impl SphincsPlus256sWallet {
     pub fn from_seed(seed: Seed) -> Result<Self> {
         Self::assert_issuable()?;
         let descriptor = Descriptor::sphincsplus256s();
+        // CIPH-RUSTQRL-2: `derived_seed` is the full SPHINCS+ crypto seed
+        // (`Seed::shake256` now returns a `Zeroizing<Vec<u8>>`); wipe the
+        // fixed-size `core_seed` copy once the signer has been constructed.
         let derived_seed = seed.shake256(SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE);
         let mut core_seed = [0_u8; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE];
         core_seed.copy_from_slice(&derived_seed);
         let signer = SphincsPlus256s::from_seed(core_seed);
+        core_seed.zeroize();
         Ok(Self { descriptor, signer, seed })
     }
 

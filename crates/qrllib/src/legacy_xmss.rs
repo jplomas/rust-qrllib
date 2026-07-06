@@ -46,11 +46,22 @@ pub struct QrlDescriptor {
 /// **not** implement [`Clone`], and restoring from backup without reconciling
 /// the OTS index causes one-time-key reuse. See the [`Xmss`] docs and
 /// `SECURITY.md` for the full threat model and operational rules.
-#[derive(Debug)]
 pub struct LegacyXmssWallet {
     seed: [u8; LEGACY_XMSS_SEED_SIZE],
     descriptor: QrlDescriptor,
     xmss: Xmss,
+}
+
+// Redacting `Debug` (CIPH-RUSTQRL-1): `seed` is secret material. The descriptor
+// is public, and the inner `Xmss` has its own redacting `Debug` (which surfaces
+// only the public height / hash function / OTS index).
+impl core::fmt::Debug for LegacyXmssWallet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LegacyXmssWallet")
+            .field("descriptor", &self.descriptor)
+            .field("xmss", &self.xmss)
+            .finish_non_exhaustive()
+    }
 }
 
 impl TryFrom<u8> for LegacyWalletType {
@@ -219,7 +230,21 @@ impl LegacyXmssWallet {
         Ok(Self { seed, descriptor, xmss })
     }
 
+    /// Generate a brand-new legacy XMSS wallet from fresh OS randomness.
+    ///
+    /// go-qrllib CIPH-QRLLIB-3: `SHAKE_128` is a QRL-only, pre-SP-800-208 XMSS
+    /// hash with a reduced quantum-security margin, retained solely for
+    /// compatibility with existing v1 addresses. New issuance is therefore
+    /// refused under it — use `SHAKE_256` or `SHA2_256`. Reconstructing an
+    /// existing `SHAKE_128` wallet from a caller-supplied seed
+    /// ([`Self::new_from_seed`]), an extended seed
+    /// ([`Self::new_from_extended_seed`]), or the raw [`Xmss`] primitives, and
+    /// verifying existing `SHAKE_128` signatures, all remain unaffected.
     pub fn new(height: XmssHeight, hash_function: XmssHashFunction) -> Result<Self> {
+        if hash_function == XmssHashFunction::Shake128 {
+            return Err(QrllibError::LegacyXmssHashNotIssuable(hash_function));
+        }
+
         let mut seed = [0_u8; LEGACY_XMSS_SEED_SIZE];
         getrandom::getrandom(&mut seed)?;
         Self::new_from_seed(seed, height, hash_function, LegacyAddrFormatType::Sha2562x)
@@ -497,7 +522,7 @@ mod tests {
         ));
 
         let mut wallet =
-            LegacyXmssWallet::new(XmssHeight::new(4).expect("height"), XmssHashFunction::Shake128)
+            LegacyXmssWallet::new(XmssHeight::new(4).expect("height"), XmssHashFunction::Shake256)
                 .expect("random wallet");
         assert_eq!(wallet.height().as_u8(), 4);
         assert_eq!(wallet.descriptor().signature_type(), LegacyWalletType::Xmss);
@@ -534,5 +559,44 @@ mod tests {
         wallet.zeroize();
         assert!(wallet.seed().iter().all(|byte| *byte == 0));
         assert!(wallet.secret_key().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn new_wallet_rejects_legacy_shake128_but_recovery_allows_it() {
+        // go-qrllib CIPH-QRLLIB-3: refuse SHAKE_128 for freshly generated wallets
+        // while keeping reconstruction of already-in-use SHAKE_128 wallets intact.
+        let height = XmssHeight::new(4).expect("height");
+
+        let rejected = LegacyXmssWallet::new(height, XmssHashFunction::Shake128)
+            .expect_err("SHAKE_128 must not be issuable for new wallets");
+        assert!(matches!(
+            rejected,
+            QrllibError::LegacyXmssHashNotIssuable(XmssHashFunction::Shake128)
+        ));
+        assert!(rejected.to_string().contains("SHAKE_128"));
+        // The standardised hashes remain issuable for new wallets.
+        assert!(LegacyXmssWallet::new(height, XmssHashFunction::Shake256).is_ok());
+        assert!(LegacyXmssWallet::new(height, XmssHashFunction::Sha2_256).is_ok());
+
+        // Reconstruct an existing SHAKE_128 wallet from a caller-supplied raw
+        // seed, then from its descriptor-carrying extended seed; both work and
+        // reproduce the same tree, and the recovered signer still signs/verifies.
+        let seed = [7_u8; LEGACY_XMSS_SEED_SIZE];
+        let from_seed = LegacyXmssWallet::new_from_seed(
+            seed,
+            height,
+            XmssHashFunction::Shake128,
+            LegacyAddrFormatType::Sha2562x,
+        )
+        .expect("reconstruct SHAKE_128 from raw seed");
+
+        let mut recovered = LegacyXmssWallet::new_from_extended_seed(from_seed.extended_seed())
+            .expect("reconstruct SHAKE_128 from extended seed");
+        assert_eq!(recovered.descriptor().hash_function(), XmssHashFunction::Shake128);
+        assert_eq!(recovered.public_key(), from_seed.public_key());
+
+        let message = b"legacy shake128 recovery";
+        let signature = recovered.sign(message).expect("sign");
+        assert!(verify_legacy_xmss(message, &signature, recovered.public_key()));
     }
 }

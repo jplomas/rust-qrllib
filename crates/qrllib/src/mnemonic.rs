@@ -2,6 +2,7 @@ use crate::{
     error::{QrllibError, Result},
     wordlist,
 };
+use zeroize::Zeroizing;
 
 pub fn bin_to_mnemonic(input: &[u8]) -> Result<String> {
     if !input.len().is_multiple_of(3) {
@@ -22,13 +23,18 @@ pub fn bin_to_mnemonic(input: &[u8]) -> Result<String> {
     Ok(output.join(" "))
 }
 
-pub fn mnemonic_to_bin(mnemonic: &str) -> Result<Vec<u8>> {
+/// Decodes a QRL mnemonic back into its binary seed material.
+///
+/// The result is secret seed material (CIPH-RUSTQRL-2), so it is returned as a
+/// `Zeroizing<Vec<u8>>` that drop-clears on scope exit rather than a plain
+/// `Vec<u8>`.
+pub fn mnemonic_to_bin(mnemonic: &str) -> Result<Zeroizing<Vec<u8>>> {
     let mnemonic_words: Vec<_> = mnemonic.split(' ').collect();
     if mnemonic_words.len() % 2 != 0 {
         return Err(QrllibError::InvalidMnemonicWordCount(mnemonic_words.len()));
     }
 
-    let mut result = vec![0_u8; mnemonic_words.len() * 15 / 10];
+    let mut result = Zeroizing::new(vec![0_u8; mnemonic_words.len() * 15 / 10]);
     let mut current = 0_usize;
     let mut buffering = 0_usize;
     let mut result_index = 0_usize;
@@ -66,7 +72,7 @@ mod tests {
         let input = [0_u8; 51];
         let mnemonic = bin_to_mnemonic(&input).expect("mnemonic");
         let restored = mnemonic_to_bin(&mnemonic).expect("restore");
-        assert_eq!(restored, input);
+        assert_eq!(restored.as_slice(), input.as_slice());
     }
 
     #[test]
