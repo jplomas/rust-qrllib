@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.3...qrllib-v0.1.4) - 2026-07-06
+
+### Security
+
+- gate SPHINCS+ issuance bypass out of release + review nits
+- apply CiphSure 2026-07 audit remediations
+
 ## [0.1.3](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.2...qrllib-v0.1.3) - 2026-06-17
 
 ### Fixed
