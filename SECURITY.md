@@ -12,9 +12,37 @@ If you discover a security vulnerability in `rust-qrllib`, please report it resp
 
 ## Threat Model
 
-This library assumes a trusted execution environment, a secure operating-system random source, no physical memory-probing attacks, and correct caller behavior. XMSS callers must manage state correctly.
+### Assumptions
 
-This library protects against post-quantum signature forgery under the assumptions of the configured algorithm. It does not protect against compromised hosts, weak system randomness, application-level replay/rate-limit failures, or XMSS index reuse.
+The library assumes:
+
+- A trusted host, Rust toolchain, and JavaScript runtime for WASM consumers.
+- A functioning operating-system CSPRNG for key generation, hedged signing, and
+  randomized encapsulation.
+- Callers authenticate the data and protocol context they intend to sign.
+- XMSS callers maintain one durable, monotonic OTS-index authority per key.
+
+### What the library protects against
+
+- Signature forgery under the security assumptions of the configured scheme.
+- Malformed public inputs reaching unchecked public API paths: wrong lengths and
+  unsupported identifiers return typed errors or verification failure.
+- Accidental reuse of one in-memory XMSS signer through cloning or concurrent
+  mutable access in safe Rust.
+- Residual secret material in owned Rust buffers after normal drop, on a
+  best-effort basis described below.
+
+### What the library does not protect against
+
+- Compromised hosts, malicious dependencies or toolchains, physical memory
+  probing, swap/hibernation capture, or side-channel-capable co-tenants.
+- Weak or subverted system randomness.
+- Application-level replay, authorization, rate limiting, transaction intent,
+  or display/UI substitution attacks.
+- XMSS index reuse across processes, devices, database rollbacks, or restored
+  backups.
+- Copies of secrets made by callers, debuggers, serializers, the JavaScript
+  engine, or the browser before Rust zeroization runs.
 
 ### Signing modes (ML-DSA-87)
 
@@ -34,6 +62,19 @@ Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `Sphincs
 Accessor methods that return owned secret bytes (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies inherit the same drop-clear semantics. The owned wrapper dereferences transparently to the underlying byte array or `Vec<u8>` and works unchanged with `hex::encode`, `Sha256::digest`, `.iter()`, and the library's verify helpers.
 
 After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `sign_attached`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
+
+#### Guarantee boundary
+
+Zeroization is defense in depth, not proof that no secret copy remains. Rust may
+move values, allocator pages may retain prior contents, optimized code and FFI
+may create copies, and operating systems may page memory to disk. `zeroize`
+provides volatile writes and compiler fences for the buffers it owns; it cannot
+wipe copies outside those buffers. WASM adds a second boundary: Rust can clear
+linear-memory state, but JavaScript strings are immutable and cannot be
+reliably erased.
+
+Use an HSM or equivalent protected execution environment where process-memory
+zeroization is not a sufficient control.
 
 ### API Precondition Guarantees
 
@@ -60,7 +101,9 @@ The Trail of Bits audit was scoped to the Go implementation (`go-qrllib`). Sever
 - **Inconsistent ML-DSA secret-material zeroisation (TOB-QRLLIB-10).** Every secret-bearing public type implements `Drop` that zeroizes its backing buffer, and accessors that return owned secret bytes wrap them in `zeroize::Zeroizing<T>` so callers inherit the same clear-on-drop semantics (see the **Memory hygiene** section above).
 - **XMSS height accepts out-of-range values (TOB-QRLLIB-2).** [`XmssHeight`](crates/qrllib/src/xmss.rs) is a validated newtype constructed via `XmssHeight::new(value)`, which returns `QrllibError::InvalidXmssHeight(value)` on any value outside the allowed range; the validating constructor is the only way to obtain an `XmssHeight`.
 
-The Go-side findings that *do* port to Rust are tracked separately in `~/Obsidian/QRL/post-audit-rust.md`; the per-file rustdoc cross-references the relevant TOB-QRLLIB-* identifier where it applies.
+Go-side findings that do apply to Rust are recorded in the affected rustdoc and
+covered by `crates/qrllib/tests/audit_remediation_suite.rs` and the focused
+hardening tests; references retain the relevant TOB-QRLLIB identifier.
 
 ### Browser surface (wasm)
 
@@ -71,12 +114,98 @@ The `qrllib-wasm` crate exposes two API shapes:
 
 ## Algorithm Notes
 
-| Algorithm | Status | Notes |
-|-----------|--------|-------|
-| ML-DSA-87 | Primary | FIPS 204, NIST level 5, stateless |
-| ML-KEM-1024 | Supported | FIPS 203 key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
-| SPHINCS+-256s robust | Supported | Hash-based, stateless, pre-FIPS robust parameter set |
-| XMSS | Legacy | RFC 8391, stateful, QRL compatibility only |
+| Algorithm | Status | State | Signing / failure behavior | Notes |
+|-----------|--------|-------|----------------------------|-------|
+| ML-DSA-87 | Primary | Stateless | Hedged by default; deterministic opt-in | FIPS 204, NIST level 5 |
+| ML-KEM-1024 | Supported | Stateless | Implicit rejection returns a pseudorandom shared secret for a correct-length invalid ciphertext; wrong lengths return a typed error | FIPS 203 KEM; standalone, not wallet-integrated |
+| SPHINCS+-256s robust | Supported primitive | Stateless | Randomized signing | SPHINCS+ submission parameter set, not FIPS 205 SLH-DSA; wallet issuance gated by default |
+| XMSS | Legacy migration only | **Stateful** | Deterministic; OTS index must never repeat | QRL compatibility construction; see the provenance notes in README |
+
+### XMSS provenance and standards alignment
+
+QRL deployed its XMSS construction before [RFC 8391](https://www.rfc-editor.org/rfc/rfc8391.html)
+was published in May 2018. The eventual RFC specified a construction
+that is closely aligned with QRL for the overlapping SHA2-256 and SHAKE256
+parameter families. In particular, their signature byte layout is compatible,
+and RFC 8391 section 3.1.7 permits pseudorandom private-key generation while
+giving `PRF(seed, toByte(i, 32))` as an example. That example matches the
+private WOTS-string derivation retained by QRL.
+
+This history matters because XMSS roots form part of QRL v1 public keys and
+addresses on an immutable blockchain. Replacing the deployed derivation would
+not transparently upgrade an existing key: it would derive a different tree
+root and therefore a different address. Preserving the construction is a
+consensus-compatibility requirement, not an attempt to retrofit a later
+profile onto historical keys.
+
+The compatibility surface has explicit boundaries:
+
+- `Sha2_256` and `Shake256` use the RFC 8391 signature construction for the
+  overlapping `n=32` parameter families. The `xmss::rfc8391` module maps the
+  six supported height-10/16/20 OIDs and converts between QRL's three-byte
+  descriptor/public-key convention and the RFC's four-byte OID layout.
+- The external CI test proves both signing directions against the pinned XMSS
+  reference for `XMSS-SHA2_10_256`: Rust signs and the reference verifies, then
+  the reference signs from the same 96-byte expanded seed and Rust verifies.
+  The adapter maps the other supported OIDs, but the workflow does not claim
+  independent reference coverage for every mapped parameter set.
+- QRL's 48-byte seed is SHAKE256-expanded into `SK_SEED || SK_PRF || PUB_SEED`.
+  RFC 8391 does not prescribe that outer wallet-seed convention; the interop
+  module therefore also accepts the 96 bytes directly.
+- `Shake128` is a pre-standardisation QRL-specific variant with no RFC OID. It
+  remains available only so existing v1 addresses can be parsed, verified, and
+  signed; it is not recommended for new keys.
+
+[NIST SP 800-208](https://csrc.nist.gov/pubs/sp/800/208/final), published in
+October 2020, is a later and deliberately stricter profile of stateful
+hash-based signatures. Following public analysis of multi-target security, it
+selected `PRFkeygen(SK_SEED, PUB_SEED || ADRS)` for private-string generation.
+It also restricts approved parameter sets and requires key and signature
+generation in non-exporting hardware cryptographic modules. Those requirements
+post-date QRL's deployed keys and are not this library's compatibility target.
+Accordingly, `rust-qrllib` should not be represented as an SP 800-208-conforming
+cryptographic module. That scope statement does not mean QRL signatures are
+malformed: for the overlapping construction they retain RFC-format
+interoperability as described and tested above.
+
+The cross-verification workflow pins `xmss-reference` commit `7793c40`, the
+last revision using the compatible RFC-example derivation. Upstream commit
+[`3e28db2`](https://github.com/XMSS/xmss-reference/commit/3e28db2) subsequently
+introduced the SP 800-208-style `PRFkeygen` construction. The pin is therefore
+intentional and auditable rather than an untracked dependency on an old
+revision.
+
+## Address Security
+
+Modern QRL addresses are 64 bytes:
+
+```text
+SHAKE256(descriptor || public_key)[:64]
+```
+
+Their string form is an uppercase `Q` followed by 128 hexadecimal characters.
+`format_address` emits lowercase hex; `to_checksum_address` emits the canonical
+EIP-55-style mixed-case checksum used by `go-qrllib` and wallet.js.
+
+`is_valid_address` is intentionally permissive: it accepts uniform-case input
+or a correctly checksummed mixed-case form. Applications that require typo
+detection should use `is_valid_checksum_address`. The checksum is not an
+authentication mechanism; an attacker who controls the display path can show a
+valid checksum for an attacker-controlled address.
+
+## Side-channel boundary
+
+The ML-DSA verification challenge comparison and ML-KEM re-encryption check use
+full-width constant-time equality helpers. ML-KEM decapsulation performs
+implicit rejection without branching on ciphertext validity. These properties
+do not make the whole library, Rust standard library, allocator, browser, or CPU
+constant-time.
+
+Signing includes parameter-defined rejection sampling, and execution time may
+vary with public inputs, random nonces, runtime scheduling, cache state, and the
+target platform. Deployments requiring hardware-level resistance to local
+timing, cache, fault-injection, or memory attacks should use an independently
+evaluated hardened implementation or HSM.
 
 ## XMSS State Management
 
@@ -91,6 +220,23 @@ Production XMSS usage must:
 - Reject concurrent signing from the same XMSS instance.
 - Treat restored backups as unsafe until index history is reconciled.
 - Rotate keys before exhausting the tree.
+
+The required ordering is:
+
+```text
+1. Generate the signature; the in-memory index advances.
+2. Persist the new high-water mark to durable, monotonic storage.
+3. Verify that persistence succeeded.
+4. Only then release or broadcast the signature.
+```
+
+| Failure mode | Consequence | Required control |
+|--------------|-------------|------------------|
+| Process or power loss before persistence | The previous index may be loaded again | Never release the signature before the new index is durable |
+| Concurrent signers | Two instances may consume the same index | One serialized signing authority per key |
+| Backup or snapshot restore | Stored state can move backwards | Reconcile against an external append-only high-water mark |
+| Database rollback | Used indices can reappear as available | Monotonic or append-only storage with rollback detection |
+| Tree exhaustion | No unused OTS keys remain | Monitor capacity and rotate early |
 
 ## Canonicality And Negative Testing
 
@@ -130,7 +276,7 @@ gh attestation verify sbom-spdx.json --owner theQRL
 Verify checksums:
 
 ```bash
-curl -LO https://github.com/theQRL/rust-qrllib/releases/download/vX.Y.Z/checksums-sha256.txt
+curl -LO https://github.com/theQRL/rust-qrllib/releases/download/qrllib-vX.Y.Z/checksums-sha256.txt
 sha256sum -c checksums-sha256.txt
 ```
 
@@ -138,7 +284,7 @@ Verify SLSA provenance:
 
 ```bash
 # Install slsa-verifier from https://github.com/slsa-framework/slsa-verifier
-curl -LO https://github.com/theQRL/rust-qrllib/releases/download/vX.Y.Z/provenance.intoto.jsonl
+curl -LO https://github.com/theQRL/rust-qrllib/releases/download/qrllib-vX.Y.Z/provenance.intoto.jsonl
 slsa-verifier verify-artifact Cargo.toml \
   --provenance-path provenance.intoto.jsonl \
   --source-uri github.com/theQRL/rust-qrllib
@@ -157,3 +303,16 @@ Release artifacts:
 ## Secure Development Practices
 
 Cryptographic changes require review, passing Rust CI, passing security checks, and no new unresolved warnings from `cargo clippy`, `cargo audit`, or `cargo deny`.
+
+## Version Support
+
+| Version | Support |
+|---------|---------|
+| Latest release | Full support |
+| Previous minor release | Security fixes where practical |
+| Older releases | Unsupported; upgrade to the latest release |
+
+## Contact
+
+For security concerns, email [security@theqrl.org](mailto:security@theqrl.org)
+or use the [QRL security report form](https://www.theqrl.org/security-report/).
