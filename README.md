@@ -498,7 +498,7 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo llvm-cov --locked --package qrllib --summary-only
-cd demo && npm run typecheck && npm run build
+cd demo && npm run build:wasm && npm run typecheck:app && npm run build:app
 ```
 
 Run coverage on nightly (`cargo +nightly llvm-cov --locked --package qrllib --summary-only`) to honour `#[cfg_attr(coverage_nightly, coverage(off))]` exclusions on defensive helpers whose guards cannot fire from internal callers (e.g. `constant_time_eq` length-mismatch, the duplicate length guards inside `crypto_sign_open*`). On stable the attribute is a no-op and those branches count against the ceiling.

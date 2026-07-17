@@ -135,10 +135,14 @@ jobs:
         working-directory: demo
         run: npm ci
 
+      - name: Build WASM bindings
+        working-directory: demo
+        run: npm run build:wasm
+
       - name: Type-check demo
         working-directory: demo
-        run: npm run typecheck
+        run: npm run typecheck:app
 
       - name: Build demo
         working-directory: demo
-        run: npm run build
+        run: npm run build:app

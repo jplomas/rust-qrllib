@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build:wasm": "PATH=\"$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:$PATH\" wasm-pack build ../crates/qrllib-wasm --target web --out-dir pkg",
+    "build:app": "vite build",
     "dev": "npm run build:wasm && vite",
-    "build": "npm run build:wasm && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run build:wasm && npm run build:app",
+    "typecheck:app": "tsc --noEmit",
+    "typecheck": "npm run build:wasm && npm run typecheck:app",
     "preview": "vite preview"
   },
   "dependencies": {
