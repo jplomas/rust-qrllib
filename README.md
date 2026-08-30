@@ -14,7 +14,7 @@ Supported algorithms:
 |-----------|------|----------|----------|
 | ML-DSA-87 | Lattice-based | FIPS 204 | Primary stateless signature scheme |
 | ML-KEM-1024 | Lattice-based (KEM) | FIPS 203 | Key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
-| SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path gated pending QRL's SLH-DSA parameter-set choice |
+| SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path (issuance **and** verification) gated pending QRL's SLH-DSA parameter-set choice |
 | XMSS | Hash-based | Pre-standardisation; see XMSS notes | QRL v1 → v2 migration |
 
 > **Critical — XMSS is stateful.** Reusing an OTS index can completely break
@@ -70,7 +70,7 @@ Wallet APIs include QRL descriptors, address derivation, seeds, extended seeds, 
 | `SphincsPlus256sWallet` | SPHINCS+-256s robust QRL wallet wrapper |
 | `LegacyXmssWallet` | Legacy XMSS QRL wallet wrapper |
 | `verify_mldsa87_wallet_signature` | Verify ML-DSA-87 wallet signatures with descriptor binding |
-| `verify_sphincsplus_wallet_signature` | Verify SPHINCS+ wallet signatures with descriptor binding |
+| `verify_sphincsplus_wallet_signature` | Verify SPHINCS+ wallet signatures with descriptor binding (gated — see SPHINCS+ notes) |
 | `verify_legacy_xmss` | Verify legacy XMSS signatures |
 
 Wallet-level `sign` / `verify_*` bind every signature to its descriptor via a fixed 8-byte domain-separated context: `"ZOND" || SIGNING_CONTEXT_VERSION || descriptor`. ML-DSA-87 passes it as the FIPS 204 ctx parameter; SPHINCS+-256s prepends it to the message. Callers do not need to construct the context themselves — wallet helpers do it internally — but `qrllib::signing_context(descriptor)` is exposed for parity with go-qrllib. Bumping `SIGNING_CONTEXT_VERSION` is a hard break of the signature wire format.
@@ -207,7 +207,7 @@ ML-KEM-1024 (FIPS 203) is a standalone key-encapsulation primitive — **not** a
 | `WalletType` | Modern wallet algorithm identifier |
 | `QrlDescriptor` | Legacy XMSS descriptor |
 | `XmssHashFunction`, `XmssHeight` | XMSS parameter types |
-| `format_address`, `get_address`, `is_valid_address`, `to_checksum_address`, `is_valid_checksum_address` | Modern QRL address helpers. `format_address` emits the canonical lowercase form; `to_checksum_address` emits the EIP-55-style mixed-case checksummed form. `is_valid_address` is permissive (accepts uniform-case or checksummed); `is_valid_checksum_address` is strict (canonical checksummed form only). |
+| `format_address`, `get_address`, `is_valid_address`, `to_checksum_address`, `is_valid_checksum_address` | Modern QRL address helpers. `format_address` emits the canonical lowercase form; `to_checksum_address` emits the EIP-55-style mixed-case checksummed form. `is_valid_address` is permissive about the hex body (accepts uniform-case or checksummed) but still requires an uppercase `Q` prefix, matching `go-qrllib`; `is_valid_checksum_address` is strict (canonical checksummed form only). |
 | `get_xmss_address_from_pk`, `is_valid_xmss_address` | Legacy XMSS address helpers |
 | `bin_to_mnemonic`, `mnemonic_to_bin` | QRL wordlist conversion helpers |
 | `signing_context`, `SIGNING_CONTEXT_VERSION`, `SIGNING_CONTEXT_PREFIX`, `SIGNING_CONTEXT_SIZE` | Domain-separated signing-context helpers used by wallet-level sign/verify |
@@ -291,7 +291,7 @@ timeline, scope, and compatibility guarantees.
 
 ### SPHINCS+ notes
 
-The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is reserved in the descriptor format so existing addresses keep working (`is_verifiable()` always returns `true`). Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need to construct SPHINCS+ wallets locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`). For new wallets, use **`MlDsa87Wallet`**.
+The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is also **not verifiable** through the wallet layer — `WalletType::SphincsPlus256s.is_verifiable()` returns `false`, and `verify_sphincsplus_wallet_signature` returns `false` in a default build. No SPHINCS+ signatures have ever been produced on QRL networks, so refusing verification matches the on-chain reality (and go-qrllib's `wallettype.IsVerifiable`). For the same reason `Descriptor::is_valid()` rejects the SPHINCS+ descriptor, so `get_address` and `ExtendedSeed` refuse it too. Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need the SPHINCS+ wallet path locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`), which re-enables both construction and verification. For new wallets, use **`MlDsa87Wallet`**.
 
 ### Standards and interoperability
 

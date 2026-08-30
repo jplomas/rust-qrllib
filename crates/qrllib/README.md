@@ -53,12 +53,14 @@ See the [API docs](https://docs.rs/qrllib) for the wallet-level API
 ## Feature flags
 
 - **`experimental-sphincsplus-issuance`** *(off by default)* — gates the
-  creation of new SPHINCS+ wallets. The implementation is the pre-FIPS-205
-  SPHINCS+ submission; QRL has not yet committed to a specific SLH-DSA
-  parameter set under FIPS 205, so issuing wallets is disabled by default to
-  avoid locking users to a parameter set that may change. **Verification of
-  existing SPHINCS+ signatures is always available** — only wallet creation is
-  gated.
+  SPHINCS+ **wallet path**, both creation and verification. The implementation
+  is the pre-FIPS-205 SPHINCS+ submission; QRL has not yet committed to a
+  specific SLH-DSA parameter set under FIPS 205, so the path is disabled by
+  default to avoid locking users to a parameter set that may change. No
+  SPHINCS+ signatures exist on QRL networks, so `verify_sphincsplus_wallet_signature`
+  returns `false` without this feature, matching go-qrllib. The **raw
+  `SphincsPlus256s` primitive** (`sign` / `verify_sphincsplus_signature`,
+  outside the wallet layer) stays unrestricted.
 
 ## Validation
 

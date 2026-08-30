@@ -44,6 +44,17 @@ pub fn unsafe_get_address(public_key: &[u8], descriptor: Descriptor) -> [u8; ADD
     address
 }
 
+/// Derive a QRL address from `public_key` and `descriptor`, validating both.
+///
+/// The descriptor must satisfy [`Descriptor::is_valid`] and the public key
+/// must match the length declared by its wallet type. Because
+/// `SPHINCSPLUS_256S` is not a valid common wallet descriptor
+/// (TOB-QRLLIB-4, parity with go-qrllib's `common.GetAddress`), this
+/// returns [`QrllibError::InvalidDescriptor`] for SPHINCS+ descriptors —
+/// the experimental SPHINCS+ wallet derives its address through
+/// [`unsafe_get_address`] instead.
+///
+/// [`Descriptor::is_valid`]: crate::descriptor::Descriptor::is_valid
 pub fn get_address(public_key: &[u8], descriptor: Descriptor) -> Result<[u8; ADDRESS_SIZE]> {
     let descriptor = descriptor.validate()?;
     let wallet_type = descriptor.wallet_type()?;
@@ -123,8 +134,8 @@ pub fn to_checksum_address(address: &[u8; ADDRESS_SIZE]) -> String {
 
 /// Permissive address validator.
 ///
-/// Accepts `"Q"` or `"q"` followed by 128 hex characters, where the hex body
-/// is one of:
+/// Accepts an uppercase `"Q"` followed by 128 hex characters, where the hex
+/// body is one of:
 ///
 /// - all lowercase (case-uniform), or
 /// - all uppercase (case-uniform), or
@@ -141,9 +152,13 @@ pub fn is_valid_address(address: &str) -> bool {
     }
 
     let Some((prefix, body)) = address.split_at_checked(1) else {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     };
-    if !matches!(prefix, "Q" | "q") {
+    // The `Q` prefix is uppercase-only, matching go-qrllib's
+    // `IsValidAddress`. Only the hex body carries case information, and only
+    // there does the EIP-55-style checksum apply.
+    if prefix != "Q" {
         return false;
     }
     if !body.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -247,10 +262,17 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_address_accepts_lowercase_q_prefix() {
+    fn is_valid_address_rejects_lowercase_q_prefix() {
+        // Parity with go-qrllib's `IsValidAddress`, which requires an
+        // uppercase `Q`. Both libraries must agree on exactly which strings
+        // are valid addresses, so the prefix is not case-insensitive here
+        // even though the hex body is.
         let canonical = format_address(&[0x5a; ADDRESS_SIZE]);
         let lowercased = format!("q{}", &canonical[1..]);
-        assert!(is_valid_address(&lowercased), "address with lowercase q prefix must validate");
+        assert!(
+            !is_valid_address(&lowercased),
+            "address with lowercase q prefix must not validate"
+        );
     }
 
     #[test]

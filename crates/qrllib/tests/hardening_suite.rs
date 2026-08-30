@@ -54,11 +54,16 @@ fn free_function_randomised_sign_entry_points_are_exposed() {
 }
 
 #[test]
-fn is_valid_address_accepts_both_case_prefixes() {
+fn is_valid_address_requires_an_uppercase_q_prefix() {
+    // Parity with go-qrllib's `IsValidAddress`: the `Q` prefix is
+    // uppercase-only, so both libraries accept exactly the same set of
+    // address strings. Case-insensitivity applies to the hex body alone.
     let raw = format_address(&[0xab; qrllib::ADDRESS_SIZE]);
-    let mixed = format!("q{}", raw[1..].to_ascii_uppercase());
+    let lower_prefix = format!("q{}", &raw[1..]);
+    let upper_body = format!("Q{}", raw[1..].to_ascii_uppercase());
     assert!(is_valid_address(&raw), "canonical Q-prefixed address must validate");
-    assert!(is_valid_address(&mixed), "lowercase-q-prefixed mixed-case address must validate");
+    assert!(is_valid_address(&upper_body), "all-uppercase hex body must validate");
+    assert!(!is_valid_address(&lower_prefix), "lowercase-q prefix must not validate");
 }
 
 #[test]

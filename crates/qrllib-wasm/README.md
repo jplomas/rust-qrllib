@@ -80,9 +80,12 @@ Handle-based helpers (return a numeric wallet handle): `create_mldsa_wallet` /
 should prefer these helpers so a restored seed crosses the JS/WASM boundary only
 once. Always close handles when they are no longer needed.
 
-> **SPHINCS+ note:** creating *new* SPHINCS+ wallets is disabled by default
-> (pre-FIPS-205 parameter set, TOB-QRLLIB-4); verifying existing SPHINCS+
-> signatures is always available. See the
+> **SPHINCS+ note:** the SPHINCS+ wallet path is disabled by default
+> (pre-FIPS-205 parameter set, TOB-QRLLIB-4). Wallet creation returns
+> `WalletTypeNotIssuable` and `verify_sphincsplus_message` returns `false`
+> unless the crate is built with `experimental-sphincsplus-issuance`. This
+> matches go-qrllib, where SPHINCSPLUS_256S is neither a valid nor a
+> verifiable production wallet type. See the
 > [repository](https://github.com/theQRL/rust-qrllib) for details.
 
 ## Security

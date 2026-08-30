@@ -85,7 +85,7 @@ Every exported function in `crates/qrllib/src/` is documented with the precondit
 | Public-key references | All verify / open entry points take `&[u8]` or `&[u8; N]` — neither can be null in safe Rust (vs the Go-side TOB-11 nil-pk dereference class). |
 | Wrong-size buffer inputs | Length-validating constructors return `Err(QrllibError::Invalid*Size(actual, expected))` rather than panicking; the variant names are stable. |
 | Parameter-set identifiers | `WalletType`, `XmssHashFunction`, `XmssHeight` are sum-type enums / validated newtypes constructed via `TryFrom<u8>` / `new(value)`; invalid bytes return typed errors (`QrllibError::UnknownWalletType`, `QrllibError::InvalidXmssHashFunction`, `QrllibError::InvalidXmssHeight`). There is no safe-Rust way to construct an out-of-range instance. |
-| Wallet issuance gating | `WalletType::is_issuable()` is consulted by every `SphincsPlus256sWallet` constructor and returns `Err(QrllibError::WalletTypeNotIssuable(...))` for SPHINCS+ unless `experimental-sphincsplus-issuance` (or `cfg(test)`) is set (TOB-QRLLIB-4). |
+| Wallet issuance gating | Every `SphincsPlus256sWallet` constructor returns `Err(QrllibError::WalletTypeNotIssuable(...))` unless `experimental-sphincsplus-issuance` (or `cfg(test)`) is set (TOB-QRLLIB-4). `WalletType::SphincsPlus256s` is `is_valid() == is_issuable() == is_verifiable() == false`, so `Descriptor::is_valid()` rejects the SPHINCS+ descriptor and `get_address` / `ExtendedSeed` / `verify_sphincsplus_wallet_signature` refuse it, matching go-qrllib's `wallettype` and `descriptor` gates. |
 | Stateful XMSS index | `Xmss` and `LegacyXmssWallet` do **not** implement `Clone`; accidental duplication that would cause OTS index reuse is a compile error. Index persistence remains the caller's responsibility — see `Xmss::sign` rustdoc and the "XMSS State Management" section above. |
 | Secret-bearing types | `Drop` zeroizes; accessor methods returning owned secret bytes wrap them in `zeroize::Zeroizing<T>`. Post-`.zeroize()` re-use surfaces `QrllibError::*SecretKeyZeroized` rather than producing a bogus signature. |
 | Signing mode | `sign` / `sign_attached` are hedged by default per FIPS 204 §3.4 (TOB-QRLLIB-6); `sign_deterministic` / `sign_attached_deterministic` are the explicit opt-in for protocols that need byte-identical signatures. |
@@ -118,7 +118,7 @@ The `qrllib-wasm` crate exposes two API shapes:
 |-----------|--------|-------|----------------------------|-------|
 | ML-DSA-87 | Primary | Stateless | Hedged by default; deterministic opt-in | FIPS 204, NIST level 5 |
 | ML-KEM-1024 | Supported | Stateless | Implicit rejection returns a pseudorandom shared secret for a correct-length invalid ciphertext; wrong lengths return a typed error | FIPS 203 KEM; standalone, not wallet-integrated |
-| SPHINCS+-256s robust | Supported primitive | Stateless | Randomized signing | SPHINCS+ submission parameter set, not FIPS 205 SLH-DSA; wallet issuance gated by default |
+| SPHINCS+-256s robust | Supported primitive | Stateless | Randomized signing | SPHINCS+ submission parameter set, not FIPS 205 SLH-DSA; wallet issuance **and** verification gated by default |
 | XMSS | Legacy migration only | **Stateful** | Deterministic; OTS index must never repeat | QRL compatibility construction; see the provenance notes in README |
 
 ### XMSS provenance and standards alignment
@@ -187,8 +187,10 @@ Their string form is an uppercase `Q` followed by 128 hexadecimal characters.
 `format_address` emits lowercase hex; `to_checksum_address` emits the canonical
 EIP-55-style mixed-case checksum used by `go-qrllib` and wallet.js.
 
-`is_valid_address` is intentionally permissive: it accepts uniform-case input
-or a correctly checksummed mixed-case form. Applications that require typo
+`is_valid_address` is permissive about the **hex body** only: it accepts
+uniform-case input or a correctly checksummed mixed-case form. The `Q` prefix
+must be uppercase, so `rust-qrllib` and `go-qrllib` accept exactly the same set
+of address strings. Applications that require typo
 detection should use `is_valid_checksum_address`. The checksum is not an
 authentication mechanism; an attacker who controls the display path can show a
 valid checksum for an attacker-controlled address.
@@ -248,7 +250,7 @@ Rust regression suites cover malformed input, canonicality, KATs, thread-safety 
 - `crates/qrllib/tests/acvp_mldsa.rs`
 - `crates/qrllib/tests/mlkem_cross_vectors.rs` — ML-KEM-1024 key generation, encapsulation, and decapsulation cross-verified byte-for-byte against `go-qrllib`.
 - ML-KEM-1024 NIST ACVP keyGen + encapDecap (the `acvp` module in `crates/qrllib/src/mlkem.rs`) and the C2SP/wycheproof + C2SP/CCTV corpora (`crates/qrllib/tests/wycheproof_mlkem.rs`), consumed from upstream at CI time. See `.github/acvp/README.md` and `.github/wycheproof/README.md`.
-- `crates/qrllib/tests/hardening_suite.rs` — regression coverage for the randomised-signing entry points, the `QrllibError::RejectionBudgetExceeded` variant, the lowercase-`q` address-validation tolerance, and the post-zeroize rejection of every sign/seal path (ML-DSA, SPHINCS+, and XMSS).
+- `crates/qrllib/tests/hardening_suite.rs` — regression coverage for the randomised-signing entry points, the `QrllibError::RejectionBudgetExceeded` variant, the uppercase-`Q` address-prefix requirement, and the post-zeroize rejection of every sign/seal path (ML-DSA, SPHINCS+, and XMSS).
 
 ## Dependency Security
 
