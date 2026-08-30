@@ -116,7 +116,12 @@ fn main() -> Result<(), qrllib::QrllibError> {
 }
 ```
 
-SPHINCS+-256s wallet round trip:
+SPHINCS+-256s wallet round trip — **requires the `experimental-sphincsplus-issuance`
+feature** (`cargo run --features experimental-sphincsplus-issuance`). In a default
+build `from_seed` returns `QrllibError::WalletTypeNotIssuable` and
+`verify_sphincsplus_wallet_signature` returns `false`, because the SPHINCS+ wallet
+path is gated on both sides (see [SPHINCS+ notes](#sphincs-notes)). The raw
+`SphincsPlus256s` primitive below the wallet layer needs no feature:
 
 ```rust
 use qrllib::{Seed, SphincsPlus256sWallet, verify_sphincsplus_wallet_signature};
@@ -238,7 +243,7 @@ Key and output sizes are fixed by each supported parameter set:
 |-----------|---------------------|----------------------------|------------------------|---------------|
 | ML-DSA-87 | 32-byte seed; 4,896-byte encoded secret key | 2,592 bytes | 4,627-byte signature | n/a |
 | SPHINCS+-SHAKE-256s-robust | 96-byte seed; 128-byte encoded secret key | 64 bytes | 29,792-byte signature | n/a |
-| ML-KEM-1024 | 64-byte `d || z` seed | 1,568 bytes | 1,568-byte ciphertext | 32 bytes |
+| ML-KEM-1024 | 64-byte `d \|\| z` seed | 1,568 bytes | 1,568-byte ciphertext | 32 bytes |
 | XMSS | 48-byte QRL seed; 132-byte core secret state | 64-byte core public key | Variable by tree height | n/a |
 
 Use the exported `*_SIZE` constants rather than duplicating these values in

@@ -4,10 +4,17 @@
 //! every sign / sign_attached path.
 
 use qrllib::{
-    ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, Seed, SphincsPlus256sWallet,
-    Xmss, XmssHashFunction, XmssHeight, format_address, is_valid_address,
-    sign_mldsa_with_secret_key,
+    ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, Seed, Xmss, XmssHashFunction,
+    XmssHeight, format_address, is_valid_address, sign_mldsa_with_secret_key,
 };
+
+// `enable_experimental_sphincsplus_issuance_for_testing` is compiled only into
+// debug builds or builds with `experimental-sphincsplus-issuance`
+// (TOB-QRLLIB-4 / CIPH-RUSTQRL-6), and integration tests do not inherit the
+// crate's own `cfg(test)` scope. The SPHINCS+ wallet tests below therefore
+// carry the same cfg, so `cargo test --release` still compiles without the
+// feature. Default `cargo test` and `cargo llvm-cov` are debug builds and run
+// them as before.
 
 #[test]
 fn mldsa_wallet_sign_randomized_varies_and_verifies() {
@@ -79,6 +86,7 @@ fn mldsa_wallet_seal_rejects_zeroized_signer() {
     assert!(matches!(result, Err(QrllibError::MlDsaSecretKeyZeroized)));
 }
 
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
 #[test]
 fn sphincs_wallet_sign_rejects_zeroized_signer() {
     // Bypass the SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) for this
@@ -87,7 +95,7 @@ fn sphincs_wallet_sign_rejects_zeroized_signer() {
     qrllib::enable_experimental_sphincsplus_issuance_for_testing();
 
     let seed = Seed::from_bytes(&[41_u8; qrllib::SEED_SIZE]).expect("seed");
-    let mut wallet = SphincsPlus256sWallet::from_seed(seed).expect("wallet");
+    let mut wallet = qrllib::SphincsPlus256sWallet::from_seed(seed).expect("wallet");
     wallet.zeroize();
 
     assert!(matches!(

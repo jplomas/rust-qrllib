@@ -2,8 +2,7 @@ use qrllib::{
     ADDRESS_SIZE, DESCRIPTOR_SIZE, Descriptor, ExtendedSeed, ML_DSA_87_CRYPTO_SEED_SIZE,
     ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
     MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed,
-    SphincsPlus256s, SphincsPlus256sWallet, WalletType, bin_to_mnemonic,
-    enable_experimental_sphincsplus_issuance_for_testing, extract_message, extract_signature,
+    SphincsPlus256s, WalletType, bin_to_mnemonic, extract_message, extract_signature,
     format_address, get_address, is_valid_address, mnemonic_to_bin, open,
     validate_mldsa_public_key, validate_mldsa_secret_key, verify_mldsa87_wallet_signature,
 };
@@ -231,20 +230,31 @@ fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
     assert!(zeroized_wallet.secret_key().iter().all(|byte| *byte == 0));
 }
 
+/// The raw SPHINCS+ primitive is ungated — it stays available in every build.
 #[test]
-fn sphincs_public_and_wallet_api_cover_generation_imports() {
-    // Integration tests don't inherit qrllib's `cfg(test)` scope, so the
-    // SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) sees the test build
-    // as a production build. Flip the runtime bypass before constructing
-    // any `SphincsPlus256sWallet` from this test.
-    enable_experimental_sphincsplus_issuance_for_testing();
-
+fn sphincs_primitive_covers_generation_and_imports() {
     let generated = SphincsPlus256s::generate().expect("generated signer");
     assert_eq!(generated.public_key_bytes().len(), SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE);
 
     let imported = SphincsPlus256s::from_hex_seed(&generated.hex_seed()).expect("imported signer");
     assert_eq!(generated.public_key_bytes(), imported.public_key_bytes());
     assert!(SphincsPlus256s::from_hex_seed("0x00").is_err());
+}
+
+/// The SPHINCS+ *wallet* path needs the gated issuance opt-in. The runtime
+/// helper is compiled only into debug builds or builds with
+/// `experimental-sphincsplus-issuance` (TOB-QRLLIB-4 / CIPH-RUSTQRL-6), and
+/// integration tests do not inherit the crate's own `cfg(test)` scope, so this
+/// test carries the same cfg and `cargo test --release` still compiles without
+/// the feature. Default `cargo test` and `cargo llvm-cov` are debug builds and
+/// run it as before.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
+#[test]
+fn sphincs_wallet_api_covers_generation_imports() {
+    use qrllib::{SphincsPlus256sWallet, enable_experimental_sphincsplus_issuance_for_testing};
+
+    // Flip the runtime bypass before constructing any wallet from this test.
+    enable_experimental_sphincsplus_issuance_for_testing();
 
     let seed = Seed::from_bytes(&[23_u8; SEED_SIZE]).expect("seed");
     let wallet = SphincsPlus256sWallet::from_hex_seed(&seed.to_hex_prefixed())
