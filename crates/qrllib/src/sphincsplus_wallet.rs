@@ -68,18 +68,22 @@ fn experimental() -> bool {
         || SPHINCSPLUS_EXPERIMENTAL.load(Ordering::Relaxed)
 }
 
-/// Whether wallet construction should proceed for SPHINCS+-256s today,
-/// combining the static type-level switch with the experimental opt-in.
-/// Parity with Go's `wallet/sphincsplus_256s.issuable`.
+/// Whether new SPHINCS+-256s wallets may be constructed today: the
+/// type-level gate, or the experimental opt-in. Parity with Go's
+/// `wallet/sphincsplus_256s.issuable`.
+///
+/// Gate first, opt-in second, so both operands are evaluated:
+/// `experimental()` is always true wherever this is reachable, so the other
+/// order would leave the gate untested.
 fn issuable() -> bool {
-    experimental() || WalletType::SphincsPlus256s.is_issuable()
+    WalletType::SphincsPlus256s.is_issuable() || experimental()
 }
 
-/// Whether verification should accept signatures under a SPHINCS+-256s
-/// descriptor today. Mirrors [`issuable`] for the verification side, and
-/// Go's `wallet/sphincsplus_256s.verifiable`.
+/// Whether SPHINCS+-256s signatures may be verified today. Verification-side
+/// mirror of [`issuable`], including the operand order, and of Go's
+/// `wallet/sphincsplus_256s.verifiable`.
 fn verifiable() -> bool {
-    experimental() || WalletType::SphincsPlus256s.is_verifiable()
+    WalletType::SphincsPlus256s.is_verifiable() || experimental()
 }
 
 /// Package-local descriptor validity for the experimental SPHINCS+ path.
@@ -146,11 +150,9 @@ pub fn verify_sphincsplus_wallet_signature(
     public_key: &[u8],
     descriptor: Descriptor,
 ) -> bool {
-    // Coverage: in an in-crate test build `experimental()` is hard-wired `true`
-    // via `cfg!(any(test, ...))`, so this guard cannot fire here. It is the
-    // production path — without `experimental-sphincsplus-issuance` the wallet
-    // type is not verifiable and every signature is refused, matching
-    // go-qrllib's `wallet/sphincsplus_256s.Verify`.
+    // Default builds refuse every SPHINCS+ signature, matching go-qrllib's
+    // `wallet/sphincsplus_256s.Verify`. Unreachable under test, where
+    // `experimental()` is always true.
     if !verifiable() {
         //coverage:ignore reason=defensively-unreachable
         return false;
@@ -167,20 +169,13 @@ impl SphincsPlus256sWallet {
     /// Issuance-gate check shared by every wallet constructor.
     ///
     /// Returns `Err(QrllibError::WalletTypeNotIssuable(...))` when
-    /// [`issuable`] is `false` — i.e. when the
-    /// `experimental-sphincsplus-issuance` Cargo feature is not enabled,
-    /// [`enable_experimental_sphincsplus_issuance_for_testing`] has not
-    /// been called, and we are not in an in-crate test build.
-    /// (TOB-QRLLIB-4.)
+    /// [`issuable`] is `false` (TOB-QRLLIB-4).
     ///
     /// The raw [`SphincsPlus256s`] primitive remains unrestricted; this
     /// gate applies only to *new wallet creation* at the wallet layer.
     fn assert_issuable() -> Result<()> {
-        // Coverage: in an in-crate test build `experimental()` is hard-wired
-        // `true` via `cfg!(any(test, ...))`, so the negated guard can never fire
-        // here; the `WalletTypeNotIssuable` error is reachable only from
-        // downstream (production) builds without the
-        // `experimental-sphincsplus-issuance` feature.
+        // Unreachable under test, where `experimental()` is always true; the
+        // error is reachable only from default downstream builds.
         if !issuable() {
             //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::WalletTypeNotIssuable(WalletType::SphincsPlus256s));
