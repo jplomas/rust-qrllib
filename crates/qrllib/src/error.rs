@@ -27,6 +27,18 @@ pub enum QrllibError {
     #[error("{wallet_type} invalid public key size {actual}, expected {expected}")]
     InvalidPublicKeySize { wallet_type: WalletType, actual: usize, expected: usize },
 
+    /// Returned by [`crate::mldsa::validate_mldsa_public_key`] (and so by
+    /// [`crate::mldsa::PublicKey::from_bytes`] and ML-DSA-87 key generation)
+    /// for a weak public key: one with fewer than 76 large coefficients in
+    /// its `t1`, under which the verifier would accept a signature anyone can
+    /// compute from the key alone. Key generation never produces one. The
+    /// check runs at key construction rather than inside the FIPS 204 verify
+    /// primitive, which the standard requires to accept such keys; the rule
+    /// is documented on `validate_mldsa_public_key` (go-qrllib
+    /// `ErrWeakPublicKey`).
+    #[error("ML-DSA-87 public key is weak: fewer than 76 of its 2048 t1 coefficients are large")]
+    WeakPublicKey,
+
     #[error("invalid ML-DSA seed size {0}, expected {1}")]
     InvalidMlDsaSeedSize(usize, usize),
 
