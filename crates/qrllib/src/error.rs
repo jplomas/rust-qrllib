@@ -45,6 +45,15 @@ pub enum QrllibError {
     #[error("invalid ML-DSA secret key size {0}, expected {1}")]
     InvalidMlDsaSecretKeySize(usize, usize),
 
+    /// Returned by [`crate::mldsa::validate_mldsa_secret_key`] and by every
+    /// ML-DSA-87 signing path for a packed secret key whose `s1` or `s2`
+    /// holds a coefficient outside `[-2, 2]`. Those coefficients are stored
+    /// as 3-bit fields; 5, 6 and 7 decode to -3, -4 and -5 and never come
+    /// from key generation (go-qrllib `ErrInvalidSecretKey`, qrypto.js
+    /// `invalid-sk-encoding`).
+    #[error("invalid ML-DSA-87 secret key encoding: an s1 or s2 coefficient is outside [-2, 2]")]
+    InvalidMlDsaSecretKeyEncoding,
+
     #[error("invalid ML-DSA context size {0}, expected at most {1}")]
     InvalidMlDsaContextSize(usize, usize),
 

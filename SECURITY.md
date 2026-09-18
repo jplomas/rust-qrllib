@@ -82,6 +82,22 @@ apply the same rule and run the same vector file
 (`crates/qrllib/src/mldsa/testdata/weak_public_key_vectors.json`), so a key
 is accepted or rejected identically across QRL clients.
 
+### Secret-key validation (ML-DSA-87)
+
+The `s1` and `s2` coefficients of a packed secret key are 3-bit fields; 5,
+6 and 7 are not encodings key generation writes, and a coefficient outside
+`[-2, 2]` breaks the norm bound the signing loop relies on for its
+zero-knowledge property. Every signing path checks `s1` and `s2` after
+unpacking and returns `QrllibError::InvalidMlDsaSecretKeyEncoding` on such
+a key, with the unpacked secret material zeroized on that path as on every
+other; `validate_mldsa_secret_key(&[u8])` is the same check ahead of time
+and is what `sign_with_secret_key` applies first. `rho`, `K`, `tr` and `t0`
+have no invalid encoding and are not examined. The rejection loop is
+bounded to 1024 attempts (`QrllibError::RejectionBudgetExceeded`), a
+below-2^-440 event for a key that passes the check. go-qrllib and qrypto.js
+apply the same check and bound; the tests live in-crate
+(`crates/qrllib/src/mldsa/secret_keys.rs`).
+
 ### Memory hygiene
 
 Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet` — implements `Drop` that zeroizes its backing buffer. Callers do not need to call `.zeroize()` explicitly for the scope-exit path to clear secrets from memory. Explicit `.zeroize()` is retained for long-lived signers that need to clear state mid-lifetime.
@@ -111,6 +127,7 @@ Every exported function in `crates/qrllib/src/` is documented with the precondit
 |---------|----------|
 | Public-key references | ML-DSA-87 verify / open entry points take `&mldsa::PublicKey`, a validated type whose only constructors are `PublicKey::from_bytes` and key generation; every other verify / open entry point takes `&[u8]` or `&[u8; N]`. None can be null in safe Rust (vs the Go-side TOB-11 nil-pk dereference class). |
 | ML-DSA-87 public-key validity | `PublicKey::from_bytes` returns `QrllibError::WeakPublicKey` for a weak key and `QrllibError::InvalidPublicKeySize` for a wrong length. The FIPS 204 Algorithm 8 primitive performs no key validation, as the standard specifies; see "Public-key validation (ML-DSA-87)" above. |
+| ML-DSA-87 secret-key encoding | `validate_mldsa_secret_key` and every signing path return `QrllibError::InvalidMlDsaSecretKeyEncoding` for an `s1` or `s2` coefficient outside `[-2, 2]`; see "Secret-key validation (ML-DSA-87)" above. |
 | Wrong-size buffer inputs | Length-validating constructors return `Err(QrllibError::Invalid*Size(actual, expected))` rather than panicking; the variant names are stable. |
 | Parameter-set identifiers | `WalletType`, `XmssHashFunction`, `XmssHeight` are sum-type enums / validated newtypes constructed via `TryFrom<u8>` / `new(value)`; invalid bytes return typed errors (`QrllibError::UnknownWalletType`, `QrllibError::InvalidXmssHashFunction`, `QrllibError::InvalidXmssHeight`). There is no safe-Rust way to construct an out-of-range instance. |
 | Wallet issuance gating | Every `SphincsPlus256sWallet` constructor returns `Err(QrllibError::WalletTypeNotIssuable(...))` unless `experimental-sphincsplus-issuance` (or `cfg(test)`) is set (TOB-QRLLIB-4). `WalletType::SphincsPlus256s` is `is_valid() == is_issuable() == is_verifiable() == false`, so `Descriptor::is_valid()` rejects the SPHINCS+ descriptor and `get_address` / `ExtendedSeed` / `verify_sphincsplus_wallet_signature` refuse it, matching go-qrllib's `wallettype` and `descriptor` gates. |

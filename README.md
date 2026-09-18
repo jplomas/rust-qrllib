@@ -186,6 +186,7 @@ Low-level verification and sealed-message helpers:
 |-----|---------|
 | `mldsa::PublicKey` (`MlDsa87PublicKey` at the crate root) | Validated ML-DSA-87 public key, the only type the ML-DSA-87 verify and open helpers accept. `from_bytes` rejects a wrong-length encoding and a weak key (see below) |
 | `validate_mldsa_public_key` | The same check (length, then the weak-key rule) for callers holding raw key bytes; applied by `PublicKey::from_bytes` and key generation |
+| `validate_mldsa_secret_key` | Length, then the s1/s2 encoding check every signing path applies (a 3-bit field of 5, 6 or 7 never comes from key generation and is rejected as `InvalidMlDsaSecretKeyEncoding`); for callers holding raw secret-key bytes |
 | `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context; takes a validated `mldsa::PublicKey`, never raw bytes |
 | `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (hedged by default per FIPS 204 §3.4 — TOB-QRLLIB-6) |
 | `sign_mldsa_with_secret_key_deterministic` | FIPS 204 §3.5 deterministic-mode opt-in (use for RANDAO-style protocols and KAT vector reproduction) |

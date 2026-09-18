@@ -30,6 +30,8 @@ use zeroize::{Zeroize, Zeroizing};
 #[cfg(test)]
 mod acvp;
 #[cfg(test)]
+mod secret_keys;
+#[cfg(test)]
 mod weak_keys;
 #[cfg(test)]
 mod wycheproof;
@@ -317,6 +319,25 @@ fn count_large_t1(packed_t1: &[u8]) -> usize {
     count
 }
 
+/// Checks a packed ML-DSA-87 secret key before it is used for signing: the
+/// length, then that every coefficient of `s1` and `s2` lies in
+/// `[-ETA, ETA]`, returning [`QrllibError::InvalidMlDsaSecretKeyEncoding`]
+/// otherwise.
+///
+/// A packed secret key is `rho || K || tr || s1 || s2 || t0`. The `s1` and
+/// `s2` coefficients are stored as 3-bit fields holding `ETA - v`, so
+/// `0..=2 * ETA` are the only encodings key generation writes; 5, 6 and 7
+/// decode to -3, -4 and -5. `t0` has no invalid encoding (every 13-bit field
+/// decodes into the Power2Round range) and `rho`, `K` and `tr` are opaque
+/// bytes, so this is the whole of what can be checked without recomputing
+/// the public key. An out-of-range `s1` or `s2` breaks the
+/// `‖z‖∞ < GAMMA1 − BETA` bound the rejection loop relies on, and with it
+/// the zero-knowledge property of the signature.
+///
+/// Every signing path applies the same check after unpacking the key. Keys
+/// from [`MlDsa87`] always pass; this is for callers holding raw secret-key
+/// bytes, such as [`sign_with_secret_key`] (go-qrllib `ValidateSecretKey`,
+/// qrypto.js `validateSecretKey`).
 pub fn validate_mldsa_secret_key(secret_key: &[u8]) -> Result<()> {
     if secret_key.len() != ML_DSA_87_SECRET_KEY_SIZE {
         return Err(QrllibError::InvalidMlDsaSecretKeySize(
@@ -325,7 +346,31 @@ pub fn validate_mldsa_secret_key(secret_key: &[u8]) -> Result<()> {
         ));
     }
 
-    Ok(())
+    let mut s1 = PolyVecL::default();
+    let mut s2 = PolyVecK::default();
+    let mut offset = 2 * ML_DSA_87_CRYPTO_SEED_SIZE + TR_BYTES;
+    for poly in s1.vec.iter_mut().chain(s2.vec.iter_mut()) {
+        poly_eta_unpack(poly, &secret_key[offset..offset + POLY_ETA_PACKED_BYTES]);
+        offset += POLY_ETA_PACKED_BYTES;
+    }
+    let in_range = secret_key_vecs_in_range(&s1, &s2);
+    zero_poly_vec_l(&mut s1);
+    zero_poly_vec_k(&mut s2);
+    if in_range { Ok(()) } else { Err(QrllibError::InvalidMlDsaSecretKeyEncoding) }
+}
+
+/// Reports whether every coefficient of `s1` and `s2` lies in `[-ETA, ETA]`.
+/// Branch-free like the rest of the module: `(v + ETA) | (ETA - v)` is
+/// negative exactly when `v` is out of range, and the sign bits are OR-ed so
+/// the scan never stops early.
+fn secret_key_vecs_in_range(s1: &PolyVecL, s2: &PolyVecK) -> bool {
+    let mut bad = 0_i32;
+    for poly in s1.vec.iter().chain(s2.vec.iter()) {
+        for v in poly.coeffs {
+            bad |= (v + ETA) | (ETA - v);
+        }
+    }
+    bad >= 0
 }
 
 /// Verifies a detached ML-DSA-87 `signature` over `message` under `context`
@@ -1468,7 +1513,13 @@ fn crypto_sign_signature(
 
     unpack_sk(&mut rho, &mut key, &mut tr, &mut t0, &mut s1, &mut s2, secret_key);
 
+    // Inside the closure so that the zeroize sequence below runs for a
+    // rejected key as well.
     let result = (|| -> Result<()> {
+        if !secret_key_vecs_in_range(&s1, &s2) {
+            return Err(QrllibError::InvalidMlDsaSecretKeyEncoding);
+        }
+
         shake256_many(&mut mu, &[&tr, &prefix, message]);
 
         let mut data_to_be_hashed = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE + RND_BYTES + CRH_BYTES];
