@@ -16,6 +16,7 @@ Supported algorithms:
 - ML-DSA-87: primary FIPS 204 stateless signature scheme, ported in-repo from `go-qrllib`
 - ML-KEM-1024: FIPS 203 key-encapsulation primitive (not a signature), ported in-repo from `go-qrllib`; standalone, not wallet-integrated
 - SPHINCS+-256s robust: conservative hash-based stateless option
+- Falcon-1024: round-3 submission (pre-FIPS 206) signature primitive, ported in-repo from `go-qrllib`, bit for bit with the reference NIST API; standalone, not wallet-integrated
 - XMSS: legacy QRL compatibility with strong statefulness caveats
 
 ## Test And Verification
@@ -31,7 +32,7 @@ The main checks are:
 Additional workflow coverage:
 
 - `acvp.yml`: ML-DSA-87 keygen/signing against NIST ACVP vectors
-- `cross-verify.yml`: reference implementation interoperability for ML-DSA-87, SPHINCS+, and XMSS
+- `cross-verify.yml`: reference implementation interoperability for ML-DSA-87, SPHINCS+, XMSS, and Falcon-1024 (byte-for-byte against PQClean)
 - `security.yml`: `cargo audit`, `cargo deny`, and dependency review
 - Rust/npm direct dependencies are exact-pinned; GitHub Actions are SHA-pinned with version comments
 - `pages.yml`: Vue/Tailwind demo build and GitHub Pages deployment
@@ -41,7 +42,7 @@ Additional workflow coverage:
 
 Directionality:
 
-- ML-DSA-87, SPHINCS+, and XMSS are bidirectional.
+- ML-DSA-87, SPHINCS+, XMSS, and Falcon-1024 are bidirectional; Falcon-1024 additionally requires byte-identical keys and signatures from a shared randomness stream.
 
 The XMSS workflow proves both directions for `XMSS-SHA2_10_256` against
 `xmss-reference` commit `7793c40`. That pin uses the pseudorandom private-key

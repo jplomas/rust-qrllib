@@ -75,7 +75,7 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
         let imported = MlDsa87::from_hex_seed(&signer_a.hex_seed()).expect("hex import");
         assert_eq!(imported.public_key_bytes(), signer_a.public_key_bytes(), "{}", vector.name);
 
-        // KAT byte-equality assertions require FIPS 204 §3.5 deterministic
+        // KAT byte-equality assertions require FIPS 204 §3.4 deterministic
         // mode; the default `sign` is now hedged per TOB-QRLLIB-6.
         let signature_a = signer_a.sign_deterministic(&context, &message).expect("signature a");
         let signature_b = signer_a.sign_deterministic(&context, &message).expect("signature b");

@@ -20,6 +20,14 @@ These tests verify that `rust-qrllib`'s signature implementations are interopera
 - Key sizes: PK=64, SK=128, Seed=96, Sig=29792 bytes
 - Note: Uses `consistent-basew` branch which has the corrected FORS index decoding (see [NIST PQC Forum discussion](https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/88tuvtb7nN4/m/DA1QCoJWBAAJ))
 
+### Falcon-1024 (round-3 submission, NIST API) - Byte-for-byte bidirectional
+- Reference: https://github.com/PQClean/PQClean `crypto_sign/falcon-1024/clean` @ commit `0586a824` (the round-3 reference code: integer-emulated floating point, `sign_dyn`)
+- Harness: [`falcon1024_crossverify_ref.c`](falcon1024_crossverify_ref.c) with the Rust example [`falcon1024_crossverify.rs`](../../crates/qrllib/examples/falcon1024_crossverify.rs), both ported from go-qrllib
+- Both sides draw every random byte from one SHAKE256 stream (the C harness replaces `randombytes()`), so the check requires byte-identical public keys, private keys, signed messages and detached signatures, plus mutual open/verify
+- PQClean accepts signatures zero-padded to the falcon-padded-1024 length (1280 bytes); rust-qrllib, like go-qrllib, accepts exactly one encoding. Each harness pins its side's behaviour
+- Runs on amd64 and arm64
+- Key sizes: PK=1793, SK=2305, Seed=48, detached Sig <= 1462 bytes
+
 ### XMSS (SHA2_10_256) - Bidirectional via the `rfc8391` module
 - Reference: https://github.com/XMSS/xmss-reference @ commit `7793c40`
 - Parameters: XMSS-SHA2_10_256 (OID 0x00000001), height=10, n=32, w=16

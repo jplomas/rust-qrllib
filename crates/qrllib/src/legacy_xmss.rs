@@ -337,7 +337,16 @@ pub fn verify_legacy_xmss(
     let Ok(height) = get_xmss_height_from_sig_size(signature.len() as u32, 16) else {
         return false;
     };
-    let Ok(descriptor) = QrlDescriptor::from_extended_public_key(&extended_public_key) else {
+    // QRL v1 mainnet parity (qrllib <= v1.2.4, go-qrllib
+    // `v1_mainnet_parity_test.go`): the address format is checked only at
+    // address derivation, never on verify, and byte 2 is ignored on parse.
+    // The address-format nibble is therefore masked out here; it still
+    // reaches `get_xmss_address_from_pk` and `is_valid_xmss_address`, which
+    // reject anything but SHA256_2X.
+    let mut descriptor_bytes = [0_u8; LEGACY_XMSS_DESCRIPTOR_SIZE];
+    descriptor_bytes.copy_from_slice(&extended_public_key[..LEGACY_XMSS_DESCRIPTOR_SIZE]);
+    descriptor_bytes[1] &= 0x0f;
+    let Ok(descriptor) = QrlDescriptor::from_bytes(&descriptor_bytes) else {
         return false;
     };
     // Coverage: unreachable today because `LegacyWalletType` has a single
@@ -600,5 +609,106 @@ mod tests {
         let message = b"legacy shake128 recovery";
         let signature = recovered.sign(message).expect("sign");
         assert!(verify_legacy_xmss(message, &signature, recovered.public_key()));
+    }
+
+    /// QRL v1 mainnet descriptor rules (qrllib <= v1.2.4), ported from
+    /// go-qrllib `legacywallet/xmss/v1_mainnet_parity_test.go`: byte 2 is
+    /// ignored on parse and written as 0, and the address format is checked
+    /// only at address derivation. Addresses funded under those rules must
+    /// still migrate.
+    mod v1_mainnet_parity {
+        use super::{
+            LEGACY_XMSS_ADDRESS_SIZE, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE, LEGACY_XMSS_SEED_SIZE,
+            LegacyAddrFormatType, LegacyWalletType, LegacyXmssWallet, QrlDescriptor, QrllibError,
+            XmssHashFunction, XmssHeight, get_xmss_address_from_pk, is_valid_xmss_address,
+            verify_legacy_xmss,
+        };
+        use sha2::{Digest, Sha256};
+
+        /// Recomputes the trailing checksum so an address differs from a valid
+        /// one only in the field under test.
+        fn with_checksum(
+            mut address: [u8; LEGACY_XMSS_ADDRESS_SIZE],
+        ) -> [u8; LEGACY_XMSS_ADDRESS_SIZE] {
+            let checksum = Sha256::digest(&address[..3 + 32]);
+            address[3 + 32..].copy_from_slice(&checksum[28..]);
+            address
+        }
+
+        fn fixture() -> (
+            Vec<u8>,
+            Vec<u8>,
+            [u8; LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE],
+            [u8; LEGACY_XMSS_ADDRESS_SIZE],
+        ) {
+            let mut seed = [0_u8; LEGACY_XMSS_SEED_SIZE];
+            for (i, b) in seed.iter_mut().enumerate() {
+                *b = i as u8;
+            }
+            let mut wallet = LegacyXmssWallet::new_from_seed(
+                seed,
+                XmssHeight::new(4).expect("height"),
+                XmssHashFunction::Shake256,
+                LegacyAddrFormatType::Sha2562x,
+            )
+            .expect("wallet");
+            let message = b"v1 parity".to_vec();
+            let signature = wallet.sign(&message).expect("sign");
+            let epk = wallet.public_key();
+            let address = get_xmss_address_from_pk(epk).expect("address");
+            assert!(verify_legacy_xmss(&message, &signature, epk));
+            assert!(is_valid_xmss_address(address));
+            (message, signature, epk, address)
+        }
+
+        #[test]
+        fn reserved_byte_ignored_on_parse() {
+            let (message, signature, epk, address) = fixture();
+            for b in [0x01_u8, 0x80, 0xff] {
+                let mut bad = epk;
+                bad[2] = b;
+                assert!(verify_legacy_xmss(&message, &signature, bad), "byte 2 = {b:#04x}");
+                let got = get_xmss_address_from_pk(bad).expect("address");
+                assert_eq!(got[2], 0, "byte 2 = {b:#04x}: address byte 2");
+                assert_ne!(got, address, "byte 2 = {b:#04x}: the raw PK is hashed");
+                assert!(is_valid_xmss_address(got));
+            }
+        }
+
+        #[test]
+        fn addr_format_checked_only_at_address_derivation() {
+            let (message, signature, epk, address) = fixture();
+            let mut bad = epk;
+            bad[1] = (bad[1] & 0x0f) | (0x01 << 4);
+            assert!(verify_legacy_xmss(&message, &signature, bad));
+            assert!(matches!(
+                get_xmss_address_from_pk(bad),
+                Err(QrllibError::UnsupportedLegacyAddressFormat(1))
+            ));
+            let mut bad_address = address;
+            bad_address[1] = (bad_address[1] & 0x0f) | (0x01 << 4);
+            assert!(!is_valid_xmss_address(with_checksum(bad_address)));
+        }
+
+        #[test]
+        fn multisig_descriptor_is_not_xmss() {
+            for descriptor in [[0x11_u8, 0x00, 0x00], [0x11, 0x01, 0x00]] {
+                assert!(QrlDescriptor::from_bytes(&descriptor).is_err());
+                let mut address = [0_u8; LEGACY_XMSS_ADDRESS_SIZE];
+                address[..3].copy_from_slice(&descriptor);
+                assert!(!is_valid_xmss_address(with_checksum(address)));
+            }
+        }
+
+        #[test]
+        fn to_bytes_normalises_reserved_byte() {
+            let descriptor = QrlDescriptor::new(
+                XmssHeight::new(10).expect("height"),
+                XmssHashFunction::Sha2_256,
+                LegacyWalletType::Xmss,
+                LegacyAddrFormatType::Sha2562x,
+            );
+            assert_eq!(descriptor.to_bytes()[2], 0);
+        }
     }
 }

@@ -1,5 +1,11 @@
 //! FIPS 204 ML-DSA-87: key generation, signing, and verification.
 //!
+//! Section numbers in this crate refer to the final standard (NIST FIPS 204,
+//! published 2024-08-13): §3.4 "Hedged and Deterministic Signing", §3.6.1
+//! "Randomness Generation", §3.6.2 "Public-Key and Signature Length Checks".
+//! The 2023 initial public draft covered hedged and deterministic signing
+//! under §3.5.1, which is where older "§3.5" citations came from.
+//!
 //! # Public-key validation
 //!
 //! [`verify_bytes`], [`open`] and [`crate::verify_mldsa87_wallet_signature`]
@@ -334,6 +340,18 @@ fn count_large_t1(packed_t1: &[u8]) -> usize {
 /// `‖z‖∞ < GAMMA1 − BETA` bound the rejection loop relies on, and with it
 /// the zero-knowledge property of the signature.
 ///
+/// Whether `t0` and `tr` are consistent with `rho`, `s1` and `s2` is not
+/// checked: an inconsistent key passes and signs (more slowly at the extremes
+/// of `t0`, where the per-attempt acceptance drops from about 0.25 to about
+/// 0.09 because more attempts exceed `OMEGA` hints; the bounded attempt loop
+/// turns any key that rejects every attempt into
+/// [`QrllibError::RejectionBudgetExceeded`] rather than a spin). A wrong `tr`
+/// changes the challenge, so no such signature verifies under the key's own
+/// public half; a wrong `t0` only changes the hints, so a small change leaves
+/// most signatures valid and a large one leaves none. A caller importing raw
+/// secret-key bytes from an untrusted source should check a signature against
+/// the expected public key (go-qrllib `ValidateSecretKey` docs).
+///
 /// Every signing path applies the same check after unpacking the key. Keys
 /// from [`MlDsa87`] always pass; this is for callers holding raw secret-key
 /// bytes, such as [`sign_with_secret_key`] (go-qrllib `ValidateSecretKey`,
@@ -433,7 +451,7 @@ pub fn sign_with_secret_key(
     sign_with_secret_key_modal(context, message, secret_key, true)
 }
 
-/// FIPS 204 §3.5 **deterministic-mode** counterpart to
+/// FIPS 204 §3.4 **deterministic-mode** counterpart to
 /// [`sign_with_secret_key`] — the per-signature random value is fixed
 /// at 32 zero bytes, so two signs with the same `(secret_key, context,
 /// message)` produce byte-identical signatures.
@@ -568,7 +586,7 @@ impl MlDsa87 {
         sign_with_secret_key(context, message, &self.secret_key)
     }
 
-    /// FIPS 204 §3.5 **deterministic-mode** counterpart to
+    /// FIPS 204 §3.4 **deterministic-mode** counterpart to
     /// [`MlDsa87::sign`]. Two `sign_deterministic` calls with the same
     /// `(context, message)` under the same key produce byte-identical
     /// signatures (`rnd = 32 zero bytes`).
@@ -593,7 +611,7 @@ impl MlDsa87 {
         crypto_sign_mldsa(message, context, &self.secret_key, true)
     }
 
-    /// FIPS 204 §3.5 deterministic-mode counterpart to
+    /// FIPS 204 §3.4 deterministic-mode counterpart to
     /// [`MlDsa87::sign_attached`]. Same caveats as
     /// [`MlDsa87::sign_deterministic`].
     pub fn sign_attached_deterministic(&self, context: &[u8], message: &[u8]) -> Result<Vec<u8>> {
@@ -779,30 +797,44 @@ fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
 }
 //coverage:ignore end
 
+/// Samples `poly` uniformly from the SHAKE128 stream of `seed || nonce`, as
+/// the reference `poly_uniform` and FIPS 204 Algorithm 30 (RejNTTPoly) do.
 fn poly_uniform(poly: &mut Poly, seed: &[u8; ML_DSA_87_CRYPTO_SEED_SIZE], nonce: u16) {
-    let mut buffer = [0_u8; POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES + 2];
-    let mut buffer_len = POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES;
-
     let mut state = Shake128::default();
     state.update(seed);
     state.update(&nonce.to_le_bytes());
     let mut reader = state.finalize_xof();
-    reader.read(&mut buffer[..buffer_len]);
+    poly_uniform_from_xof(poly, |buffer| reader.read(buffer));
+}
+
+/// Runs the rejection sampling of the reference `poly_uniform` over an
+/// arbitrary byte stream (`squeeze` fills its argument with the next bytes),
+/// so that tests can drive the refill path, which no real seed reaches in
+/// practice: it needs at least 25 rejected candidates among the first 280,
+/// where 0.27 are expected, a 2^-132 event per polynomial.
+///
+/// The first read takes exactly `POLY_UNIFORM_N_BLOCKS` blocks of the stream,
+/// as the reference squeezes them. The two spare bytes of the buffer only hold
+/// a leftover carry on refills; reading them on the first pass would shift
+/// every later read of the stream by two bytes relative to the reference and
+/// to FIPS 204, which takes three bytes at a time from one continuous stream
+/// (go-qrllib `polyUniformFromXOF`).
+fn poly_uniform_from_xof(poly: &mut Poly, mut squeeze: impl FnMut(&mut [u8])) {
+    let mut buffer = [0_u8; POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES + 2];
+    let mut buffer_len = POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES;
+    squeeze(&mut buffer[..buffer_len]);
 
     let mut ctr = rej_uniform(&mut poly.coeffs, &buffer[..buffer_len]);
-    // Coverage: the refill loop body is probabilistic — the first `rej_uniform`
-    // fills every slot for the seeds our tests generate. Kept for correctness
-    // under pathological Shake128 outputs; measured indirectly by ACVP fixtures
-    // that exercise the same rejection-sampling code paths.
-    //coverage:ignore start reason=statistically-unreachable
     while ctr < N {
+        // Five blocks (840 bytes) and one block (168 bytes) are multiples of
+        // 3, so `off` is always 0 for these parameters; the carry mirrors the
+        // reference poly_uniform.
         let off = buffer_len % 3;
         buffer.copy_within(buffer_len - off..buffer_len, 0);
-        reader.read(&mut buffer[off..off + STREAM128_BLOCK_BYTES]);
+        squeeze(&mut buffer[off..off + STREAM128_BLOCK_BYTES]);
         buffer_len = STREAM128_BLOCK_BYTES + off;
         ctr += rej_uniform(&mut poly.coeffs[ctr..], &buffer[..buffer_len]);
     }
-    //coverage:ignore end
 }
 
 fn rej_uniform(coefficients: &mut [i32], buffer: &[u8]) -> usize {
@@ -1493,7 +1525,23 @@ fn crypto_sign_signature(
     if randomized_signing {
         getrandom::getrandom(&mut rnd)?;
     }
+    let result = crypto_sign_signature_internal(signature, &prefix, message, &rnd, secret_key);
+    rnd.zeroize();
+    result
+}
 
+/// FIPS 204 Algorithm 7 (ML-DSA.Sign_internal) over `prefix || message`:
+/// the external interface passes the `0x00 || |ctx| || ctx` domain prefix,
+/// the internal interface (used by the ACVP harness) an empty one. `rnd` is
+/// the per-signature randomness (32 zero bytes for the deterministic
+/// variant).
+fn crypto_sign_signature_internal(
+    signature: &mut [u8; ML_DSA_87_SIGNATURE_SIZE],
+    prefix: &[u8],
+    message: &[u8],
+    rnd: &[u8; RND_BYTES],
+    secret_key: &[u8; ML_DSA_87_SECRET_KEY_SIZE],
+) -> Result<()> {
     let mut rho = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
     let mut key = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
     let mut tr = [0_u8; TR_BYTES];
@@ -1520,12 +1568,12 @@ fn crypto_sign_signature(
             return Err(QrllibError::InvalidMlDsaSecretKeyEncoding);
         }
 
-        shake256_many(&mut mu, &[&tr, &prefix, message]);
+        shake256_many(&mut mu, &[&tr, prefix, message]);
 
         let mut data_to_be_hashed = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE + RND_BYTES + CRH_BYTES];
         data_to_be_hashed[..ML_DSA_87_CRYPTO_SEED_SIZE].copy_from_slice(&key);
         data_to_be_hashed[ML_DSA_87_CRYPTO_SEED_SIZE..ML_DSA_87_CRYPTO_SEED_SIZE + RND_BYTES]
-            .copy_from_slice(&rnd);
+            .copy_from_slice(rnd);
         data_to_be_hashed[ML_DSA_87_CRYPTO_SEED_SIZE + RND_BYTES..].copy_from_slice(&mu);
         shake256(&mut rho_prime, &data_to_be_hashed);
         data_to_be_hashed.zeroize();
@@ -1610,7 +1658,6 @@ fn crypto_sign_signature(
     })();
 
     key.zeroize();
-    rnd.zeroize();
     rho_prime.zeroize();
     zero_poly_vec_l(&mut s1);
     zero_poly_vec_k(&mut s2);
@@ -1656,6 +1703,17 @@ fn crypto_sign_verify_mldsa(
     public_key: &[u8; ML_DSA_87_PUBLIC_KEY_SIZE],
 ) -> Result<bool> {
     let prefix = context_prefix(context)?;
+    Ok(crypto_sign_verify_internal(signature, &prefix, message, public_key))
+}
+
+/// FIPS 204 Algorithm 8 (ML-DSA.Verify_internal) over `prefix || message`;
+/// see [`crypto_sign_signature_internal`] for the two prefixes.
+fn crypto_sign_verify_internal(
+    signature: &[u8; ML_DSA_87_SIGNATURE_SIZE],
+    prefix: &[u8],
+    message: &[u8],
+    public_key: &[u8; ML_DSA_87_PUBLIC_KEY_SIZE],
+) -> bool {
     let mut buffer = [0_u8; K * POLY_W1_PACKED_BYTES];
     let mut rho = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
     let mut challenge = [0_u8; C_TILDE_BYTES];
@@ -1670,15 +1728,15 @@ fn crypto_sign_verify_mldsa(
 
     unpack_pk(&mut rho, &mut t1, public_key);
     if unpack_sig(&mut challenge, &mut z, &mut hints, signature) {
-        return Ok(false);
+        return false;
     }
     if poly_vec_l_chk_norm(&z, GAMMA1 - BETA) != 0 {
-        return Ok(false);
+        return false;
     }
 
     let mut pk_hash = [0_u8; TR_BYTES];
     shake256(&mut pk_hash, public_key);
-    shake256_many(&mut mu, &[&pk_hash, &prefix, message]);
+    shake256_many(&mut mu, &[&pk_hash, prefix, message]);
 
     poly_challenge(&mut challenge_poly, &challenge);
     poly_vec_matrix_expand(&mut matrix, &rho);
@@ -1703,7 +1761,7 @@ fn crypto_sign_verify_mldsa(
     poly_vec_k_pack_w1(&mut buffer, &w1);
     shake256_many(&mut challenge_recomputed, &[&mu, &buffer]);
 
-    Ok(constant_time_eq(&challenge, &challenge_recomputed))
+    constant_time_eq(&challenge, &challenge_recomputed)
 }
 
 // Thin shim over `crypto_sign_verify_mldsa`; its defensive length guard is
@@ -1778,7 +1836,7 @@ mod tests {
         let context = b"ZOND";
         let message = b"browser wasm mldsa";
         // Byte-equality assertions below (instance ↔ free-fn parity and
-        // the pinned SHA-256 hash) require FIPS 204 §3.5 deterministic
+        // the pinned SHA-256 hash) require FIPS 204 §3.4 deterministic
         // mode; default `sign` is hedged per TOB-QRLLIB-6.
         let signature = signer.sign_deterministic(context, message).expect("signature");
         assert!(signer.verify(context, message, &signature).expect("verify"));
@@ -2044,5 +2102,102 @@ mod tests {
             !crypto_sign_verify_mldsa(&signature, context, b"any message", &honest_pk)
                 .expect("primitive")
         );
+    }
+
+    /// go-qrllib `poly_uniform_refill_test.go`.
+    mod poly_uniform_refill {
+        use super::super::{
+            ML_DSA_87_CRYPTO_SEED_SIZE, N, POLY_UNIFORM_N_BLOCKS, Poly, Q, STREAM128_BLOCK_BYTES,
+            poly_uniform, poly_uniform_from_xof,
+        };
+        use sha3::digest::{ExtendableOutput, Update, XofReader};
+        use shake::{Shake128, Shake256};
+
+        /// FIPS 204 Algorithm 30 (RejNTTPoly) over one continuous byte
+        /// stream: three bytes at a time, kept when below q (Algorithm 14).
+        fn ref_rej_ntt_poly(mut next: impl FnMut(&mut [u8])) -> [i32; N] {
+            let mut a = [0_i32; N];
+            let mut j = 0;
+            while j < N {
+                let mut b = [0_u8; 3];
+                next(&mut b);
+                let z = u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2] & 0x7f) << 16;
+                if z < Q as u32 {
+                    a[j] = z as i32;
+                    j += 1;
+                }
+            }
+            a
+        }
+
+        fn stream_reader(stream: &[u8]) -> impl FnMut(&mut [u8]) + '_ {
+            let mut pos = 0;
+            move |buffer: &mut [u8]| {
+                buffer.copy_from_slice(&stream[pos..pos + buffer.len()]);
+                pos += buffer.len();
+            }
+        }
+
+        #[test]
+        fn refill_matches_rej_ntt_poly() {
+            // The first pass consumes POLY_UNIFORM_N_BLOCKS blocks, 280
+            // candidate triples. 81 leading triples of 0xFF 0xFF 0x7F (the
+            // largest 23-bit value, rejected) leave at most 199 + 56 = 255
+            // accepted candidates after the first refill, so the second
+            // refill is reached as well; sampling must continue from the right
+            // offset of the stream.
+            let mut xof = Shake256::default();
+            xof.update(b"poly_uniform refill");
+            let mut stream = vec![
+                0_u8;
+                POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES
+                    + 4 * STREAM128_BLOCK_BYTES
+            ];
+            xof.finalize_xof().read(&mut stream);
+            for i in 0..81 {
+                stream[3 * i..3 * i + 3].copy_from_slice(&[0xff, 0xff, 0x7f]);
+            }
+
+            let mut got = Poly::default();
+            poly_uniform_from_xof(&mut got, stream_reader(&stream));
+            assert_eq!(got.coeffs, ref_rej_ntt_poly(stream_reader(&stream)));
+
+            let accepted_before = |limit: usize| {
+                stream[..limit]
+                    .chunks_exact(3)
+                    .filter(|t| {
+                        (u32::from(t[0]) | u32::from(t[1]) << 8 | u32::from(t[2] & 0x7f) << 16)
+                            < Q as u32
+                    })
+                    .count()
+            };
+            let first_pass = POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES;
+            assert!(accepted_before(first_pass) < N, "first refill not exercised");
+            assert!(
+                accepted_before(first_pass + STREAM128_BLOCK_BYTES) < N,
+                "second refill not exercised"
+            );
+        }
+
+        #[test]
+        fn common_path_matches_rej_ntt_poly() {
+            let mut seeds = Shake256::default();
+            seeds.update(b"poly_uniform seeds");
+            let mut seeds = seeds.finalize_xof();
+            for i in 0..16_u16 {
+                let mut seed = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
+                seeds.read(&mut seed);
+                let nonce = (i << 8) | (i * 7 % 8);
+
+                let mut got = Poly::default();
+                poly_uniform(&mut got, &seed, nonce);
+
+                let mut xof = Shake128::default();
+                xof.update(&seed);
+                xof.update(&nonce.to_le_bytes());
+                let mut reader = xof.finalize_xof();
+                assert_eq!(got.coeffs, ref_rej_ntt_poly(|b| reader.read(b)));
+            }
+        }
     }
 }

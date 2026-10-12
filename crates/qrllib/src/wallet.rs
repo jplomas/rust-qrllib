@@ -183,7 +183,7 @@ impl MlDsa87Wallet {
         self.signer.sign(&signing_context(self.descriptor), message)
     }
 
-    /// FIPS 204 §3.5 deterministic-mode counterpart to
+    /// FIPS 204 §3.4 deterministic-mode counterpart to
     /// [`MlDsa87Wallet::sign`]. Same `(wallet, message)` always yields
     /// the same signature bytes. **Use only when the deterministic
     /// property is itself a security or protocol requirement.**

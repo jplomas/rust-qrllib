@@ -62,6 +62,15 @@ pub enum XmssHashFunction {
     Shake256 = 2,
 }
 
+/// An XMSS tree height.
+///
+/// [`XmssHeight::new`] accepts any syntactically valid height: an even
+/// integer in `[2, XMSS_MAX_HEIGHT]`. A usable tree height is narrower: even
+/// values from 4 through [`XMSS_MAX_HEIGHT`], because BDS traversal needs
+/// `h > k` and `k` is [`XMSS_WOTS_PARAM_K`] (2). Height 2 is therefore a valid
+/// `XmssHeight` that [`Xmss::initialize_tree`] and
+/// [`Xmss::initialize_tree_from_expanded_seed`] reject with
+/// [`QrllibError::InvalidXmssBdsParams`] (go-qrllib `xmss.Height` docs).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct XmssHeight(u8);
 
@@ -230,12 +239,12 @@ impl Xmss {
         seed: &[u8],
     ) -> Result<Self> {
         let height_u32 = height.as_u32();
-        // Coverage: `XmssHeight` only admits even values in [2, XMSS_MAX_HEIGHT]
-        // and XMSS_WOTS_PARAM_K is the compile-time constant 2, so this guard
-        // never fires for any constructible height. Kept to assert BDS-state
-        // pre-conditions for auditors reading the function in isolation.
+        // BDS traversal requires height > k. `XmssHeight` accepts h = 2 as a
+        // syntactically valid height (even, in [2, XMSS_MAX_HEIGHT]), but with
+        // k = 2 it cannot form a BDS state, so usable heights start at 4 and
+        // h = 2 is rejected here (go-qrllib `InitializeTree`). The `% 2` arm is
+        // unreachable for even h and k and kept as defence-in-depth.
         if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
-            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidXmssBdsParams);
         }
 
@@ -288,12 +297,9 @@ impl Xmss {
         expanded_seed: &[u8; 96],
     ) -> Result<Self> {
         let height_u32 = height.as_u32();
-        // Coverage: `XmssHeight` only admits even heights in [2, XMSS_MAX_HEIGHT]
-        // and XMSS_WOTS_PARAM_K is the compile-time constant 2, so this BDS
-        // pre-condition guard never fires for any constructible height. Mirrors
-        // the same guard in `initialize_tree`.
+        // Same BDS pre-condition as `initialize_tree`: h = 2 is a valid
+        // `XmssHeight` but cannot form a BDS state with k = 2.
         if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
-            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidXmssBdsParams);
         }
 
@@ -421,6 +427,18 @@ impl Xmss {
         read_index(&self.sk)
     }
 
+    /// Advances the BDS state to `new_index`, the next unused OTS index.
+    ///
+    /// To recover a signer, rebuild the tree from the seed and call
+    /// `set_index` with the value of [`Xmss::index`] persisted after the last
+    /// signature. That is the next unused index (the signature's index plus
+    /// one), never the index just used. Catching up is O(Δ) in the number of
+    /// skipped indices and every step is a full BDS round (a WOTS+ leaf plus
+    /// treehash updates), measured in go-qrllib at roughly 5 ms per index:
+    /// catching up 50,000 indices takes about four minutes. Persist
+    /// frequently, avoid large gaps, and only ever pass an index you
+    /// persisted yourself. Rewinding returns
+    /// [`QrllibError::XmssOtsIndexRewind`].
     pub fn set_index(&mut self, new_index: u32) -> Result<()> {
         xmss_fast_update(
             self.hash_function,
@@ -632,6 +650,24 @@ impl BdsState {
             tree_hash,
             retain: vec![0_u8; (((1 << k) - k - 1) * n) as usize],
         }
+    }
+
+    /// Reports whether this state was built for the tree `params` describes.
+    /// [`BdsState::new`] sizes every buffer from `(h, n, k)`, so a state built
+    /// for another tuple has at least one buffer of the wrong length, which the
+    /// traversal code would index past (go-qrllib `BDSState.fits`).
+    fn fits(&self, params: &XmssParams) -> bool {
+        let (h, n, k) = (params.h as usize, params.n as usize, params.k as usize);
+        if h <= k {
+            return false;
+        }
+        self.stack.len() == (h + 1) * n
+            && self.stack_levels.len() == h + 1
+            && self.auth.len() == h * n
+            && self.keep.len() == (h >> 1) * n
+            && self.retain.len() == ((1 << k) - k - 1) * n
+            && self.tree_hash.len() == h - k
+            && self.tree_hash.iter().all(|th| th.node.len() == n)
     }
 
     fn zeroize(&mut self) {
@@ -1165,9 +1201,8 @@ fn xmss_fast_gen_key_pair_from_expanded_seed(
     bds_state: &mut BdsState,
     expanded_seed: &[u8; 96],
 ) -> Result<()> {
-    if xmss_params.h & 1 == 1 {
-        return Err(QrllibError::InvalidXmssHeight(xmss_params.h as u8));
-    }
+    validate_fast_params(xmss_params)?;
+    validate_fast_outputs(xmss_params, public_key, secret_key, bds_state)?;
 
     let n = xmss_params.n as usize;
     write_index(secret_key, 0);
@@ -1187,6 +1222,51 @@ fn xmss_fast_gen_key_pair_from_expanded_seed(
         &address,
     );
     secret_key[4 + 3 * n..4 + 4 * n].copy_from_slice(&public_key[..32]);
+    Ok(())
+}
+
+/// Checks the parameter-set tuple against the supported family (n = 32,
+/// w = 16, k = 2, h even in [4, XMSS_MAX_HEIGHT]). The buffer arithmetic in
+/// the keypair core is correct only for n = 32, and BDS traversal needs
+/// h > k; h = 2 is a valid [`XmssHeight`] but cannot form a BDS state
+/// (go-qrllib `validateXMSSFastParams`).
+fn validate_fast_params(xmss_params: &XmssParams) -> Result<()> {
+    if xmss_params.n != XMSS_WOTS_PARAM_N
+        || xmss_params.wots_params.w != XMSS_WOTS_PARAM_W
+        || xmss_params.k != XMSS_WOTS_PARAM_K
+    {
+        return Err(QrllibError::InvalidXmssWotsParameter(xmss_params.wots_params.w));
+    }
+    if xmss_params.h < 2 || xmss_params.h > u32::from(XMSS_MAX_HEIGHT) || xmss_params.h & 1 == 1 {
+        return Err(QrllibError::InvalidXmssHeight(xmss_params.h.min(u32::from(u8::MAX)) as u8));
+    }
+    if xmss_params.h <= xmss_params.k {
+        return Err(QrllibError::InvalidXmssBdsParams);
+    }
+    Ok(())
+}
+
+/// Checks the caller-supplied buffers and BDS state the keypair core writes
+/// into, before anything is written: `public_key` must hold `root ||
+/// pub_seed` (2n bytes), `secret_key` must hold `idx || sk_seed || sk_prf ||
+/// pub_seed || root` (4 + 4n bytes), and `bds_state` must be built for this
+/// parameter set (go-qrllib `validateXMSSFastOutputs`).
+fn validate_fast_outputs(
+    xmss_params: &XmssParams,
+    public_key: &[u8],
+    secret_key: &[u8],
+    bds_state: &BdsState,
+) -> Result<()> {
+    let n = xmss_params.n as usize;
+    if public_key.len() < 2 * n {
+        return Err(QrllibError::InvalidXmssKeyLength(public_key.len()));
+    }
+    if secret_key.len() < 4 + 4 * n {
+        return Err(QrllibError::InvalidXmssKeyLength(secret_key.len()));
+    }
+    if !bds_state.fits(xmss_params) {
+        return Err(QrllibError::InvalidXmssBdsParams);
+    }
     Ok(())
 }
 
@@ -1728,7 +1808,11 @@ fn verify_sig(
     let n = wots_params.n as usize;
     let expected_len =
         calculate_signature_base_size(wots_params.key_size) as usize + h as usize * n;
-    if public_key.len() < 2 * n || signature_message.len() < expected_len {
+    // The public key is exactly root || pub_seed (2n bytes). Requiring the
+    // exact length keeps the encoding canonical: trailing bytes would otherwise
+    // be silently ignored, letting two byte strings name one key (go-qrllib
+    // `verifySig`, 2026-10 precondition hardening).
+    if public_key.len() != 2 * n || signature_message.len() < expected_len {
         return false;
     }
 
@@ -1803,10 +1887,11 @@ fn verify_sig(
 #[cfg(test)]
 mod tests {
     use super::{
-        BdsState, XMSS_MAX_HEIGHT, XMSS_PUBLIC_KEY_SIZE, XMSS_SECRET_KEY_SIZE, XMSS_WOTS_PARAM_K,
-        XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_W, Xmss, XmssHashFunction, XmssHeight, XmssParams,
-        get_xmss_height_from_sig_size, h_msg, verify_xmss, verify_xmss_with_custom_wots_param_w,
-        xmss_fast_gen_key_pair,
+        BdsState, WotsParams, XMSS_MAX_HEIGHT, XMSS_PUBLIC_KEY_SIZE, XMSS_SECRET_KEY_SIZE,
+        XMSS_WOTS_PARAM_K, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_W, Xmss, XmssHashFunction,
+        XmssHeight, XmssParams, get_xmss_height_from_sig_size, h_msg, verify_xmss,
+        verify_xmss_with_custom_wots_param_w, xmss_fast_gen_key_pair,
+        xmss_fast_gen_key_pair_from_expanded_seed,
     };
     use crate::QrllibError;
 
@@ -1984,8 +2069,9 @@ mod tests {
         ));
 
         let odd_params =
-            XmssParams::new(XMSS_WOTS_PARAM_N, 3, XMSS_WOTS_PARAM_W, 1).expect("odd-height params");
-        let mut odd_bds_state = BdsState::new(3, XMSS_WOTS_PARAM_N, 1);
+            XmssParams::new(XMSS_WOTS_PARAM_N, 3, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+                .expect("odd-height params");
+        let mut odd_bds_state = BdsState::new(3, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
         let mut public_key = vec![0_u8; XMSS_PUBLIC_KEY_SIZE];
         let mut secret_key = vec![0_u8; XMSS_SECRET_KEY_SIZE];
         assert!(matches!(
@@ -2090,6 +2176,156 @@ mod tests {
             &[0_u8; 48],
         )
         .expect("generated key pair");
+    }
+
+    fn verify_fixture() -> (Vec<u8>, Vec<u8>, [u8; XMSS_PUBLIC_KEY_SIZE]) {
+        let mut tree = Xmss::initialize_tree(
+            XmssHeight::new(4).expect("height"),
+            XmssHashFunction::Shake256,
+            &[0x42_u8; 48],
+        )
+        .expect("tree");
+        let message = b"precondition fixture".to_vec();
+        let signature = tree.sign(&message).expect("sign");
+        let public_key = tree.public_key();
+        assert!(verify_xmss(XmssHashFunction::Shake256, &message, &signature, &public_key));
+        (message, signature, public_key)
+    }
+
+    /// go-qrllib `TestVerify_RequiresExactPublicKeyLength`: the public key is
+    /// exactly `root || pub_seed`; trailing bytes no longer alias the key.
+    #[test]
+    fn xmss_verify_requires_exact_public_key_length() {
+        let (message, signature, public_key) = verify_fixture();
+        for extra in [1_usize, 36] {
+            let mut long = public_key.to_vec();
+            long.resize(public_key.len() + extra, 0);
+            assert!(!verify_xmss(XmssHashFunction::Shake256, &message, &signature, &long));
+        }
+        assert!(!verify_xmss(XmssHashFunction::Shake256, &message, &signature, &public_key[..63]));
+        assert!(!verify_xmss(XmssHashFunction::Shake256, &message, &signature, &[]));
+    }
+
+    /// go-qrllib `TestGetHeightFromSigSize_UnsupportedW` and
+    /// `TestNewWOTSParams_UnsupportedWPanics`: only w in {4, 16, 256} is
+    /// accepted, including widths whose truncated log2 is 2, 4 or 8. Rust
+    /// returns a typed error where Go panics.
+    #[test]
+    fn xmss_wots_width_must_match_exactly() {
+        for w in [0_u32, 3, 5, 15, 17, 255, 257, 1024] {
+            assert!(matches!(
+                WotsParams::new(XMSS_WOTS_PARAM_N, w),
+                Err(QrllibError::InvalidXmssWotsParameter(v)) if v == w
+            ));
+            assert!(get_xmss_height_from_sig_size(2500, w).is_err());
+        }
+        let (message, signature, public_key) = verify_fixture();
+        for w in [0_u32, 3, 5, 17, 257, u32::MAX] {
+            assert!(!verify_xmss_with_custom_wots_param_w(
+                XmssHashFunction::Shake256,
+                &message,
+                &signature,
+                &public_key,
+                w,
+            ));
+        }
+    }
+
+    /// Height 2 is a valid `XmssHeight` but cannot form a BDS state.
+    #[test]
+    fn xmss_height_two_is_rejected_by_tree_constructors() {
+        let height = XmssHeight::new(2).expect("height 2 is a valid XmssHeight");
+        assert!(matches!(
+            Xmss::initialize_tree(height, XmssHashFunction::Shake256, &[0_u8; 48]),
+            Err(QrllibError::InvalidXmssBdsParams)
+        ));
+        assert!(matches!(
+            Xmss::initialize_tree_from_expanded_seed(
+                height,
+                XmssHashFunction::Shake256,
+                &[0_u8; 96]
+            ),
+            Err(QrllibError::InvalidXmssBdsParams)
+        ));
+    }
+
+    /// go-qrllib `TestXMSSFastGenKeyPair_RejectsBadOutputs`: the keypair core
+    /// refuses short buffers, an unusable height and a BDS state built for
+    /// another tree before writing anything.
+    #[test]
+    fn xmss_fast_gen_key_pair_rejects_bad_outputs() {
+        let params4 = XmssParams::new(XMSS_WOTS_PARAM_N, 4, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+            .expect("params");
+        let params2 = XmssParams::new(XMSS_WOTS_PARAM_N, 2, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+            .expect("params");
+        let bds = |h, n| BdsState::new(h, n, XMSS_WOTS_PARAM_K);
+        // h = 2: BdsState::new(2, 32, 2) has no tree-hash instances; the core
+        // must refuse it before traversal.
+        type Case<'a> = (&'a str, &'a XmssParams, usize, usize, BdsState, fn(&QrllibError) -> bool);
+        let cases: [Case<'_>; 6] = [
+            ("short_pk", &params4, 10, 132, bds(4, 32), |e| {
+                matches!(e, QrllibError::InvalidXmssKeyLength(10))
+            }),
+            ("short_sk", &params4, 64, 0, bds(4, 32), |e| {
+                matches!(e, QrllibError::InvalidXmssKeyLength(0))
+            }),
+            ("height_2", &params2, 64, 132, bds(2, 32), |e| {
+                matches!(e, QrllibError::InvalidXmssBdsParams)
+            }),
+            ("bds_for_n_1", &params4, 64, 132, bds(4, 1), |e| {
+                matches!(e, QrllibError::InvalidXmssBdsParams)
+            }),
+            ("bds_for_height_6", &params4, 64, 132, bds(6, 32), |e| {
+                matches!(e, QrllibError::InvalidXmssBdsParams)
+            }),
+            ("bad_n", &XmssParams { n: 16, ..params4.clone() }, 64, 132, bds(4, 32), |e| {
+                matches!(e, QrllibError::InvalidXmssWotsParameter(_))
+            }),
+        ];
+        for (name, params, pk_len, sk_len, mut bds_state, want) in cases {
+            let mut pk = vec![0_u8; pk_len];
+            let mut sk = vec![0xAA_u8; sk_len];
+            let err = xmss_fast_gen_key_pair(
+                XmssHashFunction::Shake256,
+                params,
+                &mut pk,
+                &mut sk,
+                &mut bds_state,
+                &[0x42_u8; 48],
+            )
+            .expect_err(name);
+            assert!(want(&err), "{name}: unexpected error {err:?}");
+            let err = xmss_fast_gen_key_pair_from_expanded_seed(
+                XmssHashFunction::Shake256,
+                params,
+                &mut pk,
+                &mut sk,
+                &mut bds_state,
+                &[0_u8; 96],
+            )
+            .expect_err(name);
+            assert!(want(&err), "{name}: unexpected error {err:?}");
+            assert!(pk.iter().all(|b| *b == 0), "{name}: pk written on the error path");
+            assert!(sk.iter().all(|b| *b == 0xAA), "{name}: sk written on the error path");
+        }
+    }
+
+    /// go-qrllib `TestBDSStateFits_TreeHashInstances`.
+    #[test]
+    fn xmss_bds_state_fits_checks_tree_hash_instances() {
+        let params4 = XmssParams::new(XMSS_WOTS_PARAM_N, 4, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+            .expect("params");
+        assert!(BdsState::new(4, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K).fits(&params4));
+        let mut missing = BdsState::new(4, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
+        missing.tree_hash.pop();
+        assert!(!missing.fits(&params4));
+        let mut short = BdsState::new(4, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
+        short.tree_hash[1].node = vec![0_u8; XMSS_WOTS_PARAM_N as usize - 1];
+        assert!(!short.fits(&params4));
+        // BDS traversal needs h > k, so a height-2 parameter set fits nothing.
+        let params2 = XmssParams::new(XMSS_WOTS_PARAM_N, 2, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)
+            .expect("params");
+        assert!(!BdsState::new(4, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K).fits(&params2));
     }
 
     #[test]
