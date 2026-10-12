@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.5...qrllib-v0.1.6) - 2026-10-12
+
+### Added
+
+- *(falcon1024)* add Falcon-1024 signature primitive and ACVP sigver
+- secret key encoding checks
+- *(mldsa)* [**breaking**] validated PublicKey type and weak-key rule
+
+### Other
+
+- add rustdoc comments and enable shake zeroize feature
+- *(mldsa)* cover zeroized signing paths and document unreachable arms
+- Merge pull request #46 from jplomas/main
+- further coverage tweaks
+
 ## [0.1.5](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.4...qrllib-v0.1.5) - 2026-08-31
 
 ### Fixed
