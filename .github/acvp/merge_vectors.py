@@ -30,6 +30,7 @@ import sys
 
 
 def load_pair(prompt_path, results_path):
+    """Loads a prompt file and its expected results, keyed by tcId."""
     with open(prompt_path) as f:
         prompt = json.load(f)
     with open(results_path) as f:
@@ -59,6 +60,7 @@ def supported_signature_group(tg):
 
 
 def merge_keygen(prompt_path, results_path, param_set):
+    """Merges the keyGen vectors of param_set into keygen.json entries."""
     prompt, expected = load_pair(prompt_path, results_path)
 
     merged = []
@@ -82,6 +84,7 @@ def merge_keygen(prompt_path, results_path, param_set):
 
 
 def merge_siggen(prompt_path, results_path, param_set):
+    """Merges the supported sigGen vectors of param_set into siggen.json entries."""
     prompt, expected = load_pair(prompt_path, results_path)
 
     merged = []
@@ -113,6 +116,7 @@ def merge_siggen(prompt_path, results_path, param_set):
 
 
 def merge_sigver(prompt_path, results_path, param_set):
+    """Merges the supported sigVer vectors of param_set into sigver.json entries."""
     prompt, expected = load_pair(prompt_path, results_path)
 
     merged = []
@@ -142,6 +146,7 @@ def merge_sigver(prompt_path, results_path, param_set):
 
 
 def main():
+    """Parses the arguments and writes the merged vector files."""
     parser = argparse.ArgumentParser(description="Merge ACVP test vectors")
     parser.add_argument("--keygen-prompt", required=True)
     parser.add_argument("--keygen-results", required=True)

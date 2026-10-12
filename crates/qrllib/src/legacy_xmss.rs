@@ -329,6 +329,10 @@ impl Drop for LegacyXmssWallet {
     }
 }
 
+/// Verifies a legacy XMSS `signature` of `message` under an extended public
+/// key (descriptor followed by the public key), returning `false` for any
+/// malformed input. As in QRL v1 mainnet, the address-format nibble and the
+/// reserved descriptor byte are ignored here.
 pub fn verify_legacy_xmss(
     message: &[u8],
     signature: &[u8],
@@ -572,6 +576,8 @@ mod tests {
         assert!(wallet.secret_key().iter().all(|byte| *byte == 0));
     }
 
+    /// SHAKE_128 is refused for new wallets but still accepted when an existing
+    /// wallet is rebuilt from its seed.
     #[test]
     fn new_wallet_rejects_legacy_shake128_but_recovery_allows_it() {
         // go-qrllib CIPH-QRLLIB-3: refuse SHAKE_128 for freshly generated wallets
@@ -635,6 +641,8 @@ mod tests {
             address
         }
 
+        /// A height-4 SHAKE256 wallet with a signed message, its extended public key
+        /// and its address.
         fn fixture() -> (
             Vec<u8>,
             Vec<u8>,
@@ -661,6 +669,8 @@ mod tests {
             (message, signature, epk, address)
         }
 
+        /// Byte 2 of the extended public key is ignored on verify and zeroed in the
+        /// derived address, though the raw key bytes still feed the address hash.
         #[test]
         fn reserved_byte_ignored_on_parse() {
             let (message, signature, epk, address) = fixture();
@@ -675,6 +685,8 @@ mod tests {
             }
         }
 
+        /// An unsupported address format verifies but is refused when an address is
+        /// derived or validated.
         #[test]
         fn addr_format_checked_only_at_address_derivation() {
             let (message, signature, epk, address) = fixture();
@@ -690,6 +702,8 @@ mod tests {
             assert!(!is_valid_xmss_address(with_checksum(bad_address)));
         }
 
+        /// Multisig descriptors parse as neither an XMSS descriptor nor an XMSS
+        /// address.
         #[test]
         fn multisig_descriptor_is_not_xmss() {
             for descriptor in [[0x11_u8, 0x00, 0x00], [0x11, 0x01, 0x00]] {
@@ -700,6 +714,7 @@ mod tests {
             }
         }
 
+        /// An encoded descriptor always carries a zero reserved byte.
         #[test]
         fn to_bytes_normalises_reserved_byte() {
             let descriptor = QrlDescriptor::new(

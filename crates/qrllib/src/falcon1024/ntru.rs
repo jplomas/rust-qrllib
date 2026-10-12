@@ -72,6 +72,7 @@ struct NtruWorkspace {
 }
 
 impl NtruWorkspace {
+    /// Allocates every buffer at its largest size.
     fn new() -> Self {
         Self {
             solution: vec![0; SOLUTION_LEN],
@@ -88,6 +89,7 @@ impl NtruWorkspace {
 }
 
 impl Drop for NtruWorkspace {
+    /// Wipes every buffer.
     fn drop(&mut self) {
         zeroize_slice(&mut self.solution);
         zeroize_slice(&mut self.u32s);
@@ -107,10 +109,12 @@ struct Carve<'a, T> {
 }
 
 impl<'a, T> Carve<'a, T> {
+    /// Starts carving at the beginning of `buf`.
     fn new(buf: &'a mut [T]) -> Self {
         Self { rest: buf }
     }
 
+    /// The next `len` elements; panics if fewer remain.
     fn take(&mut self, len: usize) -> &'a mut [T] {
         let rest = core::mem::take(&mut self.rest);
         let (head, tail) = rest.split_at_mut(len);
@@ -364,6 +368,8 @@ fn poly_big_to_fp(dst: &mut [f64], src: &[u32], word_len: usize, stride: usize, 
     }
 }
 
+/// Reference `poly_big_to_small`: the one-word integers of `src` as a small
+/// polynomial, or `None` if a coefficient lies outside [-bound, bound].
 fn poly_big_to_small(src: &[u32], bound: i32) -> Option<SmallPoly> {
     let mut dst = [0_i32; N];
     for (d, &s) in dst.iter_mut().zip(src) {

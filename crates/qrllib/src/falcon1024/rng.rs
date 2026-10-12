@@ -27,6 +27,7 @@ pub(super) struct SamplerPrng {
 }
 
 impl SamplerPrng {
+    /// An unseeded PRNG; [`SamplerPrng::init`] seeds it.
     pub(super) fn new() -> Self {
         Self { buf: [0; 512], ptr: 0, state: [0; 12], counter: 0, draws: 0, exhausted: false }
     }
@@ -46,6 +47,7 @@ impl SamplerPrng {
         self.refill();
     }
 
+    /// Reference `prng_get_u8`: the next byte, refilling at the buffer end.
     pub(super) fn read_byte(&mut self) -> u8 {
         let v = self.buf[self.ptr];
         self.ptr += 1;
@@ -66,6 +68,8 @@ impl SamplerPrng {
         v
     }
 
+    /// Reference `prng_refill`: eight ChaCha20 blocks with consecutive
+    /// counters, interleaved into the buffer.
     fn refill(&mut self) {
         let mut counter = self.counter;
         for block in 0..8 {
@@ -122,6 +126,7 @@ impl SamplerPrng {
 }
 
 impl Drop for SamplerPrng {
+    /// Wipes the buffer, the ChaCha state and the counters.
     fn drop(&mut self) {
         self.buf.zeroize();
         self.state.zeroize();
@@ -132,6 +137,7 @@ impl Drop for SamplerPrng {
     }
 }
 
+/// The ChaCha20 quarter round on words a, b, c and d of `state`.
 fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     state[a] = state[a].wrapping_add(state[b]);
     state[d] = (state[d] ^ state[a]).rotate_left(16);

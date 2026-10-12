@@ -1,4 +1,4 @@
-//! Floating-point layer: the `fpr` helpers, the FFT over R[x]/(x^n + 1), the
+//! Floating-point layer: the `fpr` helpers, the FFT over `R[x]/(x^n + 1)`, the
 //! LDL tree and the discrete Gaussian sampler, transliterated from the Falcon
 //! round-3 reference (`fpr.h`, `fft.c`, `sign.c`) and go-qrllib
 //! `crypto/internal/falcon1024/{fpr,fft}.go`.
@@ -76,6 +76,8 @@ struct GmTables {
     im: [f64; N],
 }
 
+/// The reference `fpr_gm_tab` roots of unity, decoded once from their bit
+/// patterns into separate real and imaginary halves.
 fn gm_tables() -> &'static GmTables {
     static TABLES: OnceLock<GmTables> = OnceLock::new();
     TABLES.get_or_init(|| {
@@ -131,6 +133,7 @@ const FPR_EXPM_P63_COEFFICIENTS: [u64; 13] = [
     0x8000_0000_0000_0000,
 ];
 
+/// High 64 bits of the 128-bit product a*b.
 fn mul_hi(a: u64, b: u64) -> u64 {
     ((u128::from(a) * u128::from(b)) >> 64) as u64
 }
@@ -633,6 +636,7 @@ pub(super) fn fft_inv_norm2(dst: &mut [f64], a: &[f64], b: &[f64], logn: usize) 
     }
 }
 
+/// Reference `poly_adj_fft`: the adjoint, negating the imaginary half.
 pub(super) fn fft_adj(a: &mut [f64], logn: usize) {
     let degree = 1 << logn;
     for x in &mut a[degree >> 1..degree] {
@@ -640,6 +644,7 @@ pub(super) fn fft_adj(a: &mut [f64], logn: usize) {
     }
 }
 
+/// Reference `poly_mul_fft`: a *= b, pointwise in FFT representation.
 pub(super) fn fft_mul(a: &mut [f64], b: &[f64], logn: usize) {
     let hn = 1 << (logn - 1);
     for i in 0..hn {
@@ -652,6 +657,7 @@ pub(super) fn fft_mul(a: &mut [f64], b: &[f64], logn: usize) {
     }
 }
 
+/// Reference `poly_mulconst`: multiplies every coefficient by x.
 pub(super) fn fft_mul_const(a: &mut [f64], x: f64, logn: usize) {
     for v in &mut a[..1 << logn] {
         *v *= x;
@@ -669,6 +675,7 @@ pub(super) fn fft_self_adj(dst: &mut [f64], src: &[f64], logn: usize) {
     }
 }
 
+/// Reference `poly_neg`: negates every coefficient.
 pub(super) fn fft_neg(a: &mut [f64], logn: usize) {
     for v in &mut a[..1 << logn] {
         *v = -*v;
@@ -697,12 +704,14 @@ pub(super) fn fft_mul_auto_adj(a: &mut [f64], b: &[f64], logn: usize) {
     }
 }
 
+/// Reference `poly_add`: a += b.
 pub(super) fn fft_add(a: &mut [f64], b: &[f64], logn: usize) {
     for (x, &y) in a[..1 << logn].iter_mut().zip(b) {
         *x += y;
     }
 }
 
+/// Reference `poly_sub`: a -= b.
 pub(super) fn fft_sub(a: &mut [f64], b: &[f64], logn: usize) {
     for (x, &y) in a[..1 << logn].iter_mut().zip(b) {
         *x -= y;

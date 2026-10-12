@@ -25,22 +25,26 @@ pub(super) type SmallPoly = [i32; N];
 /// Bound on |F| and |G| coefficients (and on keygen samples).
 pub(super) const NTRU_COEFF_BOUND: i32 = 127;
 
+/// Maps a small signed integer into `[0, q)`.
 pub(super) fn field_from_small(x: i32) -> u32 {
     let mut y = x as u32;
     y = y.wrapping_add(Q & (y >> 31).wrapping_neg());
     y
 }
 
+/// Subtracts q once if `a >= q`, for `a` in `[0, 2q)`, in constant time.
 fn field_reduce_once(a: u32) -> u32 {
     let mut x = a.wrapping_sub(Q);
     x = x.wrapping_add(Q & (x >> 31).wrapping_neg());
     x
 }
 
+/// Reference `mq_add`: (a + b) mod q.
 pub(super) fn field_add(a: u32, b: u32) -> u32 {
     field_reduce_once(a.wrapping_add(b))
 }
 
+/// Reference `mq_sub`: (a - b) mod q.
 pub(super) fn field_sub(a: u32, b: u32) -> u32 {
     field_reduce_once(a.wrapping_sub(b).wrapping_add(Q))
 }
@@ -72,16 +76,19 @@ fn field_inv_montgomery(x: u32) -> u32 {
     field_montgomery_mul(y17, y0)
 }
 
+/// Montgomery squaring: x^2 / 2^16 mod q.
 fn field_montgomery_sqr(x: u32) -> u32 {
     field_montgomery_mul(x, x)
 }
 
+/// Reference `mq_montymul`: a*b / 2^16 mod q, in `[0, q)`.
 pub(super) fn field_montgomery_mul(a: u32, b: u32) -> u32 {
     field_montgomery_reduce(a.wrapping_mul(b))
 }
 
 const Q_NEG_INV: u32 = 12287;
 
+/// Montgomery reduction of a 32-bit product: x / 2^16 mod q, in `[0, q)`.
 fn field_montgomery_reduce(mut x: u32) -> u32 {
     let w = (x.wrapping_mul(Q_NEG_INV) & 0xFFFF).wrapping_mul(Q);
     x = x.wrapping_add(w) >> 16;
@@ -154,6 +161,7 @@ pub(super) fn hash_to_point(h: &mut ShakeReader) -> RingElement {
     p
 }
 
+/// Reference `mq_NTT`: forward NTT modulo q, in place.
 pub(super) fn ntt(f: &mut [u32]) {
     let mut t = N;
     let mut m = 1;
@@ -178,6 +186,8 @@ pub(super) fn ntt(f: &mut [u32]) {
 
 const N_INVERSE_MONTGOMERY: u32 = 64;
 
+/// Reference `mq_iNTT`: inverse NTT modulo q, in place, including the
+/// division by n.
 pub(super) fn inverse_ntt(f: &mut [u32]) {
     let mut t = 1;
     let mut m = N;
@@ -205,6 +215,7 @@ pub(super) fn inverse_ntt(f: &mut [u32]) {
     }
 }
 
+/// Pointwise Montgomery product in NTT representation: `a[i] = a[i]*b[i] / 2^16`.
 pub(super) fn ntt_mul(a: &mut [u32], b: &[u32]) {
     for (x, &y) in a.iter_mut().zip(b) {
         *x = field_montgomery_mul(*x, y);
@@ -234,6 +245,8 @@ pub(super) fn divide_ntt_by_batched_inverse(h: &mut [u32], f: &[u32]) -> bool {
     ok
 }
 
+/// The body of [`divide_ntt_by_batched_inverse`], with caller-owned scratch
+/// for the Montgomery-form divisor and its prefix products.
 fn divide_into(h: &mut [u32], f: &[u32], f_mont: &mut [u32], p_mont: &mut [u32]) -> bool {
     for (m, &x) in f_mont.iter_mut().zip(f) {
         if x == 0 {
@@ -337,12 +350,14 @@ fn sample_keygen_gaussian(rng: &mut ShakeReader) -> i32 {
     v as i32
 }
 
+/// Reads the next 8 bytes of the SHAKE stream as a little-endian u64.
 fn read_shake_u64(rng: &mut ShakeReader) -> u64 {
     let mut buf = [0_u8; 8];
     rng.read(&mut buf);
     u64::from_le_bytes(buf)
 }
 
+/// Reports whether any coefficient lies outside `[-bound, bound]`.
 pub(super) fn coefficients_exceed_bound(p: &SmallPoly, bound: i32) -> bool {
     p.iter().any(|&x| x < -bound || x > bound)
 }

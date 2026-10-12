@@ -777,6 +777,9 @@ fn poly_use_hint(out: &mut Poly, input: &Poly, hints: &Poly) {
 // within the reference-implementation range) but kept for parity with the
 // upstream C / Go implementations. Norm-check semantics are measured
 // indirectly via sign/verify round-trip tests.
+/// Reference `poly_chk_norm`: 1 if any coefficient of `poly` has absolute
+/// value at least `bound` (or `bound` exceeds (q-1)/8), else 0, computed
+/// without data-dependent branches.
 //coverage:ignore start reason=defensively-unreachable
 fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
     if bound > (Q - 1) / 8 {
@@ -1513,6 +1516,8 @@ fn crypto_sign_keypair(
     zero_poly_vec_k(&mut t0);
 }
 
+/// FIPS 204 Algorithm 2 (ML-DSA.Sign): signs `message` under `context` with
+/// OS randomness, or with 32 zero bytes when `randomized_signing` is false.
 fn crypto_sign_signature(
     signature: &mut [u8; ML_DSA_87_SIGNATURE_SIZE],
     context: &[u8],
@@ -1696,6 +1701,8 @@ fn crypto_sign_mldsa(
     Ok(signed_message)
 }
 
+/// FIPS 204 Algorithm 3 (ML-DSA.Verify): verifies `signature` of `message`
+/// under `context`; a context over 255 bytes is an error.
 fn crypto_sign_verify_mldsa(
     signature: &[u8; ML_DSA_87_SIGNATURE_SIZE],
     context: &[u8],
@@ -1809,6 +1816,8 @@ mod tests {
         seed
     }
 
+    /// Key sizes, seed and hex-seed import agree, and the derived keys hash to
+    /// the values go-qrllib produces.
     #[test]
     fn mldsa87_sizes_seed_import_and_go_parity_match() {
         assert_eq!(ML_DSA_87_PUBLIC_KEY_SIZE, 2592);
@@ -1830,6 +1839,8 @@ mod tests {
         );
     }
 
+    /// Deterministic signing, verification, signed-message open and the context
+    /// checks reproduce go-qrllib's outputs byte for byte.
     #[test]
     fn mldsa87_sign_verify_open_and_context_paths_match_go() {
         let signer = MlDsa87::from_seed(known_seed()).expect("signer");
@@ -2130,6 +2141,7 @@ mod tests {
             a
         }
 
+        /// A reader that hands out consecutive slices of `stream`.
         fn stream_reader(stream: &[u8]) -> impl FnMut(&mut [u8]) + '_ {
             let mut pos = 0;
             move |buffer: &mut [u8]| {
@@ -2138,6 +2150,8 @@ mod tests {
             }
         }
 
+        /// Sampling that needs two refills of the SHAKE128 buffer still matches a
+        /// direct transcription of RejNTTPoly.
         #[test]
         fn refill_matches_rej_ntt_poly() {
             // The first pass consumes POLY_UNIFORM_N_BLOCKS blocks, 280
@@ -2179,6 +2193,8 @@ mod tests {
             );
         }
 
+        /// `poly_uniform` matches RejNTTPoly over SHAKE128(seed || nonce) for a
+        /// spread of seeds and nonces.
         #[test]
         fn common_path_matches_rej_ntt_poly() {
             let mut seeds = Shake256::default();

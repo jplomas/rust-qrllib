@@ -21,6 +21,7 @@ struct CompressedBitReader<'a> {
 }
 
 impl CompressedBitReader<'_> {
+    /// The next bit, most significant first, or `None` past the end.
     fn read_bit(&mut self) -> Option<u32> {
         if self.bits == 0 {
             let &byte = self.src.get(self.pos)?;
@@ -32,6 +33,7 @@ impl CompressedBitReader<'_> {
         Some(u32::from(self.current >> self.bits) & 1)
     }
 
+    /// The next `count` bits as a big-endian integer, or `None` past the end.
     fn read_bits(&mut self, count: u32) -> Option<u32> {
         let mut v = 0;
         for _ in 0..count {
@@ -40,6 +42,8 @@ impl CompressedBitReader<'_> {
         Some(v)
     }
 
+    /// The unread low bits of the current byte, which a canonical encoding
+    /// leaves zero.
     fn trailing_bits(&self) -> u8 {
         if self.bits == 0 { 0 } else { self.current & ((1_u8 << self.bits) - 1) }
     }
@@ -233,6 +237,7 @@ fn trim_i8_decode(src: &[u8], bits: u32) -> Result<SmallPoly> {
 
 const PUBLIC_KEY_HEADER: u8 = LOG_N as u8;
 
+/// Encodes h as `crypto_sign_keypair` does: header 0x0A, then 14-bit packing.
 pub(super) fn pk_encode(dst: &mut [u8; FALCON_1024_PUBLIC_KEY_SIZE], h: &RingElement) {
     dst[0] = PUBLIC_KEY_HEADER;
     poly_byte_encode(&mut dst[HEADER_SIZE..], h);

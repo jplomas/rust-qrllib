@@ -181,10 +181,13 @@ const WEAK_KEY_SQUARED_NORM_BOUND: u64 = 1 << 30;
 
 type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
 
+/// Wipes a slice of plain values; used for scratch that is not wrapped in
+/// `Zeroizing`.
 fn zeroize_slice<T: zeroize::DefaultIsZeroes>(s: &mut [T]) {
     s.zeroize();
 }
 
+/// Absorbs `inputs` in order into SHAKE256 and returns its output stream.
 fn shake256_reader(inputs: &[&[u8]]) -> ShakeReader {
     let mut h = Shake256::default();
     for input in inputs {
@@ -193,6 +196,7 @@ fn shake256_reader(inputs: &[&[u8]]) -> ShakeReader {
     h.finalize_xof()
 }
 
+/// Compares two equal-length byte arrays without an early exit.
 fn constant_time_eq<const L: usize>(left: &[u8; L], right: &[u8; L]) -> bool {
     let mut diff = 0_u8;
     for (lhs, rhs) in left.iter().zip(right) {
@@ -215,6 +219,7 @@ pub trait RandomSource {
 pub struct OsRandom;
 
 impl RandomSource for OsRandom {
+    /// Fills `dest` from `getrandom`.
     fn fill_bytes(&mut self, dest: &mut [u8]) -> Result<()> {
         getrandom::getrandom(dest)?;
         Ok(())
@@ -235,6 +240,7 @@ pub struct PublicKey {
 }
 
 impl core::fmt::Debug for PublicKey {
+    /// Shows the encoded key as hex.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PublicKey").field("raw", &hex::encode(self.raw)).finish()
     }
@@ -251,12 +257,15 @@ impl PublicKey {
         Ok(Self::from_parts(raw, h))
     }
 
+    /// Encodes h and builds the key; h comes from a valid private key.
     fn from_h(h: &RingElement) -> Self {
         let mut raw = [0_u8; FALCON_1024_PUBLIC_KEY_SIZE];
         pk_encode(&mut raw, h);
         Self::from_parts(raw, *h)
     }
 
+    /// Pairs the encoding with h, converting h to the NTT and Montgomery
+    /// form verification uses.
     fn from_parts(raw: [u8; FALCON_1024_PUBLIC_KEY_SIZE], mut h_ntt: RingElement) -> Self {
         to_ntt_monty(&mut h_ntt);
         Self { raw, h_ntt }
@@ -274,6 +283,7 @@ impl PublicKey {
 }
 
 impl PartialEq for PublicKey {
+    /// Constant-time comparison of the encodings.
     fn eq(&self, other: &Self) -> bool {
         constant_time_eq(&self.raw, &other.raw)
     }
@@ -301,6 +311,7 @@ struct PrivateKeyInner {
 
 // Redacting Debug: the type owns the private key.
 impl core::fmt::Debug for PrivateKey {
+    /// Shows no key material.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PrivateKey").finish_non_exhaustive()
     }
@@ -381,6 +392,8 @@ impl PrivateKey {
         Ok(Self::from_components(*f, *g, *big_f, *big_g, &h))
     }
 
+    /// Builds the key from (f, g, F, G) and h: encodes the private key and
+    /// expands the FFT basis and LDL tree. The inputs are already checked.
     fn from_components(
         f: SmallPoly,
         g: SmallPoly,
@@ -481,6 +494,7 @@ impl PrivateKey {
         self.inner.zeroized
     }
 
+    /// [`QrllibError::FalconSecretKeyZeroized`] once the key is zeroized.
     fn signable(&self) -> Result<()> {
         if self.inner.zeroized { Err(QrllibError::FalconSecretKeyZeroized) } else { Ok(()) }
     }
@@ -517,6 +531,7 @@ impl PartialEq for PrivateKey {
 }
 
 impl Drop for PrivateKey {
+    /// Zeroizes the key; see [`PrivateKey::zeroize`].
     fn drop(&mut self) {
         self.zeroize();
     }
@@ -552,6 +567,8 @@ pub fn validate_falcon_public_key(public_key: &[u8]) -> Result<()> {
     validate_public_polynomial(&h)
 }
 
+/// Applies the weak-key rule of [`validate_falcon_public_key`] to a decoded
+/// polynomial.
 fn validate_public_polynomial(h: &RingElement) -> Result<()> {
     match weak_public_key_multiplier(h) {
         Some((multiplier, squared_norm)) => Err(QrllibError::FalconWeakPublicKey {
@@ -608,6 +625,7 @@ pub fn verify(public_key: &PublicKey, message: &[u8], signature: &[u8]) -> bool 
     verify_detached(public_key, message, signature).is_ok()
 }
 
+/// [`verify`] with the reason for a rejection.
 fn verify_detached(public_key: &PublicKey, message: &[u8], signature: &[u8]) -> Result<()> {
     let (nonce, s2) = detached_signature_decode(signature)?;
     let c0 = hash_to_point(&mut shake256_reader(&[nonce, message]));

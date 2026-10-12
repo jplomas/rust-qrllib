@@ -14,16 +14,20 @@ use std::sync::OnceLock;
 
 pub(super) const MASK31: u32 = 0x7FFF_FFFF;
 
+/// Reference `modp_set`: maps a signed x in (-p, p) into `[0, p)`.
 pub(super) fn modp_set(x: i32, p: u32) -> u32 {
     let w = x as u32;
     w.wrapping_add(p & (w >> 31).wrapping_neg())
 }
 
+/// Reference `modp_norm`: maps x in `[0, p)` to its centred value in
+/// (-p/2, p/2].
 pub(super) fn modp_norm(x: u32, p: u32) -> i32 {
     let w = x.wrapping_sub(p & (((p >> 1).wrapping_sub(x)) >> 31).wrapping_neg());
     w as i32
 }
 
+/// Reference `modp_ninv31`: -1/p mod 2^31, the Montgomery constant p0i.
 pub(super) fn modp_ninv31(p: u32) -> u32 {
     let mut y = 2_u32.wrapping_sub(p);
     for _ in 0..4 {
@@ -32,22 +36,26 @@ pub(super) fn modp_ninv31(p: u32) -> u32 {
     MASK31 & y.wrapping_neg()
 }
 
+/// Reference `modp_R`: 2^31 mod p, the Montgomery representation of 1.
 fn modp_r(p: u32) -> u32 {
     (1_u32 << 31).wrapping_sub(p)
 }
 
+/// Reference `modp_add`: (a + b) mod p.
 pub(super) fn modp_add(a: u32, b: u32, p: u32) -> u32 {
     let mut d = a.wrapping_add(b).wrapping_sub(p);
     d = d.wrapping_add(p & (d >> 31).wrapping_neg());
     d
 }
 
+/// Reference `modp_sub`: (a - b) mod p.
 pub(super) fn modp_sub(a: u32, b: u32, p: u32) -> u32 {
     let mut d = a.wrapping_sub(b);
     d = d.wrapping_add(p & (d >> 31).wrapping_neg());
     d
 }
 
+/// Reference `modp_montymul`: a*b / 2^31 mod p.
 pub(super) fn modp_montymul(a: u32, b: u32, p: u32, p0i: u32) -> u32 {
     let mut z = u64::from(a) * u64::from(b);
     let w = (z as u32).wrapping_mul(p0i) & MASK31;
@@ -57,6 +65,7 @@ pub(super) fn modp_montymul(a: u32, b: u32, p: u32, p0i: u32) -> u32 {
     d
 }
 
+/// Reference `modp_R2`: 2^62 mod p, which converts into Montgomery form.
 pub(super) fn modp_r2(p: u32, p0i: u32) -> u32 {
     let mut z = modp_r(p);
     z = modp_add(z, z, p);
@@ -82,6 +91,8 @@ pub(super) fn modp_rx(x: usize, p: u32, p0i: u32, r2: u32) -> u32 {
     z
 }
 
+/// Reference `modp_div`: a/b mod p by Fermat inversion; b must be nonzero
+/// and `r` must be [`modp_r`] of p.
 fn modp_div(a: u32, b: u32, p: u32, p0i: u32, r: u32) -> u32 {
     let e = p - 2;
     let mut z = r;
@@ -201,10 +212,13 @@ pub(super) fn modp_intt2_ext(
     }
 }
 
+/// Reference `modp_NTT2`: forward NTT modulo p on a contiguous array.
 pub(super) fn modp_ntt2(a: &mut [u32], gm: &[u32], logn: usize, p: u32, p0i: u32) {
     modp_ntt2_ext(a, 1, gm, logn, p, p0i);
 }
 
+/// Reference `modp_iNTT2`: inverse NTT modulo p on a contiguous array,
+/// including the division by n.
 pub(super) fn modp_intt2(a: &mut [u32], igm: &[u32], logn: usize, p: u32, p0i: u32) {
     modp_intt2_ext(a, 1, igm, logn, p, p0i);
 }
@@ -225,6 +239,8 @@ pub(super) struct SmallPrimeDerived {
     pub(super) r2: u32,
 }
 
+/// The [`SmallPrimeDerived`] constants of every entry in `SMALL_PRIMES`,
+/// computed once.
 pub(super) fn small_prime_derived() -> &'static [SmallPrimeDerived] {
     static VALUES: OnceLock<Vec<SmallPrimeDerived>> = OnceLock::new();
     VALUES.get_or_init(|| {
@@ -265,6 +281,7 @@ pub(super) fn zint_mul_small(m: &mut [u32], x: u32) -> u32 {
     cc
 }
 
+/// Reference `zint_mod_small_unsigned`: the unsigned big integer d mod p.
 pub(super) fn zint_mod_small_unsigned(d: &[u32], p: u32, p0i: u32, r2: u32) -> u32 {
     let mut x = 0_u32;
     for &dw in d.iter().rev() {
@@ -360,6 +377,9 @@ fn zint_negate(a: &mut [u32], ctl: u32) {
     }
 }
 
+/// Reference `zint_co_reduce`: replaces (a, b) with ((a*xa + b*xb) / 2^31,
+/// (a*ya + b*yb) / 2^31), made non-negative; bit 0 of the result is set if
+/// a was negated and bit 1 if b was.
 fn zint_co_reduce(a: &mut [u32], b: &mut [u32], xa: i64, xb: i64, ya: i64, yb: i64) -> u32 {
     let mut cca = 0_i64;
     let mut ccb = 0_i64;
@@ -392,6 +412,8 @@ fn zint_co_reduce(a: &mut [u32], b: &mut [u32], xa: i64, xb: i64, ya: i64, yb: i
     nega | (negb << 1)
 }
 
+/// Reference `zint_finish_mod`: brings a into `[0, m)`, given -m <= a < 0
+/// when `neg` is 1 and 0 <= a < 2m when it is 0.
 fn zint_finish_mod(a: &mut [u32], m: &[u32], neg: u32) {
     let mut cc = 0_u32;
     for (&aw, &mw) in a.iter().zip(m) {
@@ -409,6 +431,9 @@ fn zint_finish_mod(a: &mut [u32], m: &[u32], neg: u32) {
     }
 }
 
+/// Reference `zint_co_reduce_mod`: replaces (a, b) with
+/// ((a*xa + b*xb) / 2^31 mod m, (a*ya + b*yb) / 2^31 mod m), adding the
+/// multiples of m that make each division exact.
 #[allow(clippy::too_many_arguments)]
 fn zint_co_reduce_mod(
     a: &mut [u32],

@@ -43,11 +43,13 @@ static const char LABEL_REF[] = "rust-qrllib Falcon-1024 cross-verification: PQC
 /* Deterministic randombytes() over SHAKE256(label), replacing common/randombytes.c. */
 static shake256incctx drbg;
 
+/* Squeezes the next n bytes of the stream drbg_seed started. */
 int randombytes(uint8_t *output, size_t n) {
     shake256_inc_squeeze(output, n, &drbg);
     return 0;
 }
 
+/* Restarts the randombytes() stream as SHAKE256(label). */
 static void drbg_seed(const char *label) {
     shake256_inc_init(&drbg);
     shake256_inc_absorb(&drbg, (const uint8_t *)label, strlen(label));
@@ -65,6 +67,7 @@ typedef struct {
     size_t siglen;
 } entry;
 
+/* Reports a failure for entry i and returns 1. */
 static int fail(const char *what, int i) {
     printf("FAIL: entry %d: %s\n", i, what);
     return 1;
@@ -98,11 +101,13 @@ static int generate(entry *es) {
     return 0;
 }
 
+/* Writes p as a field: its length as a big-endian u32, then the bytes. */
 static int write_field(FILE *f, const uint8_t *p, size_t n) {
     uint8_t len[4] = { (uint8_t)(n >> 24), (uint8_t)(n >> 16), (uint8_t)(n >> 8), (uint8_t)n };
     return fwrite(len, 1, 4, f) == 4 && fwrite(p, 1, n, f) == n ? 0 : 1;
 }
 
+/* Reads a field written by write_field, refusing one longer than max. */
 static int read_field(FILE *f, uint8_t *p, size_t max, size_t *n) {
     uint8_t len[4];
     if (fread(len, 1, 4, f) != 4) {
@@ -115,6 +120,7 @@ static int read_field(FILE *f, uint8_t *p, size_t max, size_t *n) {
     return fread(p, 1, *n, f) == *n ? 0 : 1;
 }
 
+/* Writes ENTRIES entries to path, field by field. */
 static int write_entries(const char *path, const entry *es) {
     FILE *f = fopen(path, "wb");
     if (!f) {
@@ -135,6 +141,7 @@ static int write_entries(const char *path, const entry *es) {
     return 0;
 }
 
+/* Reads ENTRIES entries from path, refusing wrong key sizes and oversize fields. */
 static int read_entries(const char *path, entry *es) {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -230,6 +237,7 @@ static int check(const entry *theirs) {
     return 0;
 }
 
+/* Checks the rust-qrllib file, then writes this side's entries for rust-qrllib. */
 int main(int argc, char **argv) {
     static entry theirs[ENTRIES], ours[ENTRIES];
     if (argc != 3) {

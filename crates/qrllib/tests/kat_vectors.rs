@@ -56,6 +56,9 @@ fn decode_hex_vec(value: &str) -> Vec<u8> {
     hex::decode(value).expect("hex input")
 }
 
+/// For each ML-DSA-87 vector seed, key derivation and deterministic signing
+/// are reproducible, signatures verify, open and seal round-trip, a tampered
+/// message or context is refused, and zeroization clears the key material.
 #[test]
 fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
     assert_eq!(ML_DSA_87_PUBLIC_KEY_SIZE, 2592);

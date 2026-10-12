@@ -233,6 +233,10 @@ impl core::fmt::Display for XmssHeight {
 }
 
 impl Xmss {
+    /// Builds an XMSS tree of `height` from an [`XMSS_SEED_SIZE`]-byte `seed`,
+    /// with the BDS traversal state ready to sign from index 0. Heights the BDS
+    /// parameters cannot hold (h <= k, which rules out h = 2) and seeds of the
+    /// wrong length are rejected.
     pub fn initialize_tree(
         height: XmssHeight,
         hash_function: XmssHashFunction,
@@ -423,6 +427,7 @@ impl Xmss {
         self.height
     }
 
+    /// The next unused OTS index, the value to persist after each signature.
     pub fn index(&self) -> u32 {
         read_index(&self.sk)
     }
@@ -629,6 +634,8 @@ impl XmssParams {
 }
 
 impl BdsState {
+    /// An empty BDS state sized for a tree of `height` with `n`-byte nodes and
+    /// retain parameter `k`.
     fn new(height: u32, n: u32, k: u32) -> Self {
         let mut tree_hash = Vec::new();
         for _ in 0..(height - k) {
@@ -670,6 +677,7 @@ impl BdsState {
             && self.tree_hash.iter().all(|th| th.node.len() == n)
     }
 
+    /// Clears the secret node bytes while keeping every buffer's length.
     fn zeroize(&mut self) {
         // See the note on `Xmss::zeroize` — clear byte contents but preserve
         // the `Vec` buffer lengths so later reads do not panic.
@@ -1270,6 +1278,8 @@ fn validate_fast_outputs(
     Ok(())
 }
 
+/// Signs `message` with the OTS key at the current index, then advances the
+/// index and the BDS state; a zeroized secret key is refused.
 fn xmss_fast_sign_message(
     hash_function: XmssHashFunction,
     params: &XmssParams,
@@ -1749,6 +1759,8 @@ fn wots_pk_from_sig(
     }
 }
 
+/// Recomputes the tree root into `root` from `leaf` at `leaf_idx` and its
+/// authentication path.
 #[allow(clippy::too_many_arguments)]
 fn validate_auth_path(
     hash_function: XmssHashFunction,
@@ -1797,6 +1809,9 @@ fn validate_auth_path(
     hash_h(hash_function, root, &buffer, public_seed, address, n as u32);
 }
 
+/// Verifies an XMSS signature over `message` against `public_key`
+/// (`root || pub_seed`) for a tree of height `h`, requiring the exact public
+/// key length and a long enough signature.
 fn verify_sig(
     hash_function: XmssHashFunction,
     wots_params: &WotsParams,
@@ -2019,6 +2034,8 @@ mod tests {
         }
     }
 
+    /// Exercises the public conversions, accessors and validation errors of the
+    /// XMSS types, and the private parameter checks behind them.
     #[test]
     fn xmss_public_api_and_private_validation_paths_are_covered() {
         assert_eq!(XmssHashFunction::try_from(0).expect("sha2"), XmssHashFunction::Sha2_256);
@@ -2091,6 +2108,8 @@ mod tests {
         assert!(tree.seed().iter().all(|byte| *byte == 0));
     }
 
+    /// Truncated signatures and mismatched WOTS widths fail to verify, and
+    /// `set_index` refuses an index past the tree or a rewind.
     #[test]
     fn xmss_verification_and_index_error_paths_are_covered() {
         let mut tree = Xmss::initialize_tree(
@@ -2178,6 +2197,8 @@ mod tests {
         .expect("generated key pair");
     }
 
+    /// A height-4 SHAKE256 tree's signature of a fixed message with its public
+    /// key, checked to verify.
     fn verify_fixture() -> (Vec<u8>, Vec<u8>, [u8; XMSS_PUBLIC_KEY_SIZE]) {
         let mut tree = Xmss::initialize_tree(
             XmssHeight::new(4).expect("height"),

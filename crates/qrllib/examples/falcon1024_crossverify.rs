@@ -41,6 +41,7 @@ const NONCE_SIZE: usize = 40;
 struct Stream(<Shake256 as ExtendableOutput>::Reader);
 
 impl Stream {
+    /// The SHAKE256 stream over `label`, as the C harness seeds `randombytes`.
     fn new(label: &str) -> Self {
         let mut h = Shake256::default();
         h.update(label.as_bytes());
@@ -49,6 +50,7 @@ impl Stream {
 }
 
 impl RandomSource for Stream {
+    /// Squeezes the next `dest.len()` bytes of the stream.
     fn fill_bytes(&mut self, dest: &mut [u8]) -> qrllib::Result<()> {
         self.0.read(dest);
         Ok(())
@@ -65,11 +67,14 @@ struct Entry {
 }
 
 impl Entry {
+    /// The fields in file order.
     fn fields(&self) -> [&Vec<u8>; 5] {
         [&self.pk, &self.sk, &self.msg, &self.sm, &self.sig]
     }
 }
 
+/// Generates [`ENTRIES`] key pairs, signed messages and detached signatures
+/// from the stream over `label`, self-verifying each.
 fn generate(label: &str) -> Result<Vec<Entry>, String> {
     let mut rnd = Stream::new(label);
     let mut out = Vec::with_capacity(ENTRIES);
@@ -95,6 +100,7 @@ fn generate(label: &str) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
+/// Writes the entries as length-prefixed (u32 big-endian) fields.
 fn write_entries(path: &str, entries: &[Entry]) -> Result<(), String> {
     let mut buf = Vec::new();
     for e in entries {
@@ -106,6 +112,7 @@ fn write_entries(path: &str, entries: &[Entry]) -> Result<(), String> {
     fs::write(path, buf).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// Reads exactly [`ENTRIES`] entries written by either harness.
 fn read_entries(path: &str) -> Result<Vec<Entry>, String> {
     let data = fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     let mut rest = &data[..];
@@ -191,6 +198,8 @@ fn check(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `generate <file>` writes this side's entries; `check <file>` checks the
+/// C harness's.
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     let usage = || {

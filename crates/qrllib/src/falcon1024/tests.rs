@@ -55,16 +55,19 @@ struct ReferenceNtru {
     big_g: String,
 }
 
+/// Parses the shared verify_raw KAT fixture of ten signatures.
 fn verify_raw_fixture() -> VerifyRawFixture {
     let fixture: VerifyRawFixture = serde_json::from_str(VERIFY_RAW_KAT).expect("verify_raw KAT");
     assert_eq!(fixture.tests.len(), 10);
     fixture
 }
 
+/// The encoded public key of the verify_raw fixture.
 fn reference_public_key_bytes() -> Vec<u8> {
     hex::decode(verify_raw_fixture().public_key_hex).expect("hex")
 }
 
+/// Decodes a hex string of N signed bytes into a small polynomial.
 fn small_poly_from_hex(s: &str) -> SmallPoly {
     let bytes = hex::decode(s).expect("hex");
     assert_eq!(bytes.len(), N);
@@ -75,6 +78,7 @@ fn small_poly_from_hex(s: &str) -> SmallPoly {
     p
 }
 
+/// The reference (f, g, F, G) of the fixture key.
 fn reference_ntru() -> (SmallPoly, SmallPoly, SmallPoly, SmallPoly) {
     let r: ReferenceNtru = serde_json::from_str(REFERENCE_NTRU).expect("reference ntru");
     (
@@ -91,6 +95,7 @@ struct Replay<'a> {
 }
 
 impl RandomSource for Replay<'_> {
+    /// Hands out the next bytes of the replay, failing once they run out.
     fn fill_bytes(&mut self, dest: &mut [u8]) -> Result<()> {
         if dest.len() > self.bytes.len() {
             return Err(QrllibError::Randomness("replay exhausted".into()));
@@ -102,10 +107,12 @@ impl RandomSource for Replay<'_> {
     }
 }
 
+/// A source that replays `bytes` in order.
 fn replay(bytes: &[u8]) -> Replay<'_> {
     Replay { bytes }
 }
 
+/// The key generated from a seed of 48 copies of `byte`.
 fn seed_key(byte: u8) -> PrivateKey {
     PrivateKey::from_seed(&[byte; FALCON_1024_SEED_SIZE]).expect("key from seed")
 }
@@ -121,12 +128,14 @@ struct NistDrbg {
 }
 
 impl NistDrbg {
+    /// Instantiates the DRBG from 48 bytes of entropy, as `randombytes_init` does.
     fn new(entropy: &[u8]) -> Self {
         let mut d = Self { key: [0; 32], v: [0; 16] };
         d.update(Some(entropy));
         d
     }
 
+    /// Increments V as a 128-bit big-endian counter.
     fn increment(&mut self) {
         for b in self.v.iter_mut().rev() {
             *b = b.wrapping_add(1);
@@ -136,12 +145,14 @@ impl NistDrbg {
         }
     }
 
+    /// Encrypts one copy of V under the current key.
     fn encrypt_v(cipher: &Aes256, v: &[u8; 16]) -> [u8; 16] {
         let mut block = Array::from(*v);
         cipher.encrypt_block(&mut block);
         block.into()
     }
 
+    /// The CTR_DRBG update function, mixing in `provided` when given.
     fn update(&mut self, provided: Option<&[u8]>) {
         let cipher = Aes256::new_from_slice(&self.key).expect("key");
         let mut tmp = [0_u8; 48];
@@ -158,6 +169,7 @@ impl NistDrbg {
         self.v.copy_from_slice(&tmp[32..]);
     }
 
+    /// Fills `buf` with output blocks and then runs the update step.
     fn read(&mut self, mut buf: &mut [u8]) {
         let cipher = Aes256::new_from_slice(&self.key).expect("key");
         while !buf.is_empty() {
@@ -174,12 +186,14 @@ impl NistDrbg {
 /// Every call is one `randombytes` invocation, which matters because the
 /// DRBG reseeds itself after each one.
 impl RandomSource for NistDrbg {
+    /// Reads `dest.len()` bytes as one `randombytes` call.
     fn fill_bytes(&mut self, dest: &mut [u8]) -> Result<()> {
         self.read(dest);
         Ok(())
     }
 }
 
+/// The entropy the NIST KAT generator seeds its DRBG with: bytes 0..48.
 fn kat_entropy() -> [u8; 48] {
     core::array::from_fn(|i| i as u8)
 }
@@ -188,6 +202,7 @@ fn kat_entropy() -> [u8; 48] {
 // Reference vectors.
 // ---------------------------------------------------------------------------
 
+/// Every fixture signature, given as raw big-endian s2, passes verify_raw.
 #[test]
 fn verify_raw_reference_vectors() {
     let fixture = verify_raw_fixture();
@@ -206,6 +221,8 @@ fn verify_raw_reference_vectors() {
     }
 }
 
+/// The fixture's (f, g, F, G) reproduce its public key and G, solve the NTRU
+/// equation, and sign signatures that verify.
 #[test]
 fn reference_key_components() {
     let (f, g, big_f, big_g) = reference_ntru();
@@ -232,11 +249,14 @@ fn reference_key_components() {
     }
 }
 
+/// Appends `s` and a newline to the transcript hash.
 fn write_line(h: &mut Sha1, s: &str) {
     Digest::update(h, s.as_bytes());
     Digest::update(h, b"\n");
 }
 
+/// Appends `prefix`, `data` in upper-case hex and a newline to the
+/// transcript hash.
 fn write_hex_line(h: &mut Sha1, prefix: &str, data: &[u8]) {
     Digest::update(h, prefix.as_bytes());
     Digest::update(h, hex::encode_upper(data).as_bytes());
@@ -356,6 +376,7 @@ fn detached_signature_matches_round3_kat_signed_messages() {
     }
 }
 
+/// Reframes a signed message's signature as the detached form (header 0x3A).
 fn detached_from_signed_message(sm: &[u8], msg_len: usize) -> Vec<u8> {
     let sig_offset = codec::SIGNED_MESSAGE_PREFIX_SIZE + msg_len;
     assert_eq!(sm[sig_offset], 0x2A);
@@ -369,6 +390,8 @@ fn detached_from_signed_message(sm: &[u8], msg_len: usize) -> Vec<u8> {
 // Encodings and the public API.
 // ---------------------------------------------------------------------------
 
+/// A private key survives encode and decode and signs identically; malformed
+/// encodings and wrong-size seeds are refused.
 #[test]
 fn private_key_encoding_round_trip() {
     let seed: Vec<u8> = (0..48).collect();
@@ -407,6 +430,8 @@ fn private_key_encoding_round_trip() {
     }
 }
 
+/// Private-key decoding refuses the excluded minimum of each trimmed field
+/// (-128 for F, -16 for f).
 #[test]
 fn excluded_trim_i8_values_are_refused() {
     let key = seed_key(0);
@@ -424,6 +449,8 @@ fn excluded_trim_i8_values_are_refused() {
     ));
 }
 
+/// Signing draws exactly the nonce and then the sampler seed, and lays them
+/// out as crypto_sign does.
 #[test]
 fn sign_draws_nonce_then_seed() {
     let key = PrivateKey::from_seed(&[0; 48]).unwrap();
@@ -446,6 +473,8 @@ fn sign_draws_nonce_then_seed() {
     }
 }
 
+/// open returns the message of a valid signed message and refuses tampered,
+/// truncated or foreign ones.
 #[test]
 fn open_accepts_valid_and_rejects_malformed() {
     let key = seed_key(0);
@@ -494,6 +523,8 @@ fn open_accepts_valid_and_rejects_malformed() {
     assert!(matches!(open(&public_key, &sm[..41]), Err(QrllibError::FalconSignatureTooShort(42))));
 }
 
+/// Detached signatures match the signed-message signature and are refused
+/// when altered or checked against the wrong key or message.
 #[test]
 fn detached_signatures() {
     let key = seed_key(0);
@@ -550,6 +581,8 @@ fn detached_signatures() {
     }
 }
 
+/// The compressed codec round-trips extreme coefficients and refuses
+/// out-of-range values, negative zero and truncation.
 #[test]
 fn compressed_codec_edges() {
     // Every coefficient at its extremes round-trips; one beyond is refused.
@@ -589,6 +622,8 @@ fn compressed_codec_edges() {
     assert!(codec::compressed_decode(&[0x00, 0x00, 0x00, 0x00]).is_err());
 }
 
+/// Public-key decoding accepts a valid key and refuses bad lengths, headers
+/// and coefficients.
 #[test]
 fn public_key_decoding() {
     let key = seed_key(7);
@@ -616,6 +651,7 @@ fn public_key_decoding() {
     ));
 }
 
+/// A zeroized key refuses to sign or export but keeps its public key.
 #[test]
 fn zeroize_lifecycle() {
     let mut key = seed_key(3);
@@ -640,6 +676,7 @@ fn zeroize_lifecycle() {
     assert_eq!(format!("{key:?}"), "PrivateKey { .. }");
 }
 
+/// One key signs from several threads at once.
 #[test]
 fn concurrent_signing_with_one_key() {
     let key = seed_key(9);
@@ -663,6 +700,8 @@ fn concurrent_signing_with_one_key() {
 // Private-key import checks.
 // ---------------------------------------------------------------------------
 
+/// Import refuses an F that derives the right public key but breaks
+/// f*G - g*F = q.
 #[test]
 fn import_rejects_inconsistent_ntru_solutions() {
     let key = seed_key(0);
@@ -840,6 +879,7 @@ fn shared_weak_key_vectors() {
     }
 }
 
+/// Constant and monomial public keys are refused by the weak-key rule.
 #[test]
 fn constant_and_monomial_keys_are_weak() {
     for (index, value) in [(0, 1_u32), (0, 5000), (0, Q - 1), (17, 1), (1023, 6144)] {
@@ -889,6 +929,7 @@ fn nan_tree_ends_signing() {
     assert!(matches!(broken.sign(b"spin"), Err(QrllibError::FalconSigningFailed)));
 }
 
+/// The sampler PRNG refills seamlessly after the last buffered byte.
 #[test]
 fn sampler_prng_refills_at_the_buffer_end() {
     let mut prng = SamplerPrng::new();
@@ -963,6 +1004,7 @@ fn attempt_budget_ends_signing() {
     assert!(matches!(broken.sign(b"reject"), Err(QrllibError::FalconSigningFailed)));
 }
 
+/// fpr_rint rounds to nearest with ties to even, as the reference does.
 #[test]
 fn fpr_rint_rounds_half_to_even() {
     for (x, want) in [
@@ -1012,6 +1054,7 @@ fn key_derivation_does_not_depend_on_architecture() {
     }
 }
 
+/// Absorbs `p` into `digest` as N little-endian int16 values.
 fn absorb_small_poly(digest: &mut Shake256, p: &SmallPoly) {
     let mut buf = [0_u8; 2 * N];
     for (chunk, &x) in buf.chunks_exact_mut(2).zip(p) {
@@ -1020,6 +1063,7 @@ fn absorb_small_poly(digest: &mut Shake256, p: &SmallPoly) {
     Update::update(digest, &buf);
 }
 
+/// The first 32 bytes of the SHAKE256 output, in hex.
 fn finish_digest(digest: Shake256) -> String {
     use sha3::digest::XofReader;
     let mut out = [0_u8; 32];
@@ -1027,6 +1071,7 @@ fn finish_digest(digest: Shake256) -> String {
     hex::encode(out)
 }
 
+/// Reads the next `L` bytes of `rng`.
 fn read_stream<const L: usize>(rng: &mut ShakeReader) -> [u8; L] {
     use sha3::digest::XofReader;
     let mut out = [0_u8; L];
@@ -1034,6 +1079,7 @@ fn read_stream<const L: usize>(rng: &mut ShakeReader) -> [u8; L] {
     out
 }
 
+/// Runs key generation on `rng` and builds the private key.
 fn key_from_stream(rng: &mut ShakeReader) -> PrivateKey {
     let (f, g, big_f, big_g, h) = generate_key_components(rng);
     PrivateKey::from_components(f, g, big_f, big_g, &h)
@@ -1093,6 +1139,7 @@ fn keygen_self_sign_loop_digest() {
     );
 }
 
+/// ldexp_one yields 2^e, including subnormals, underflow and overflow.
 #[test]
 fn ldexp_one_matches_powers_of_two() {
     for (e, want) in [
@@ -1107,6 +1154,8 @@ fn ldexp_one_matches_powers_of_two() {
     }
 }
 
+/// Compressed decoding refuses empty, truncated and padded input, and
+/// encoding handles a partial last byte.
 #[test]
 fn compressed_decode_and_encode_boundaries() {
     // Empty input fails on the first eight-bit read; one byte fails in the
@@ -1133,6 +1182,8 @@ fn compressed_decode_and_encode_boundaries() {
     assert!(codec::compressed_decode(&padded).is_err());
 }
 
+/// OS-random keys sign and verify, Debug output is as expected, and source
+/// failures propagate.
 #[test]
 fn os_random_key_generation_and_debug_output() {
     let key = PrivateKey::generate().unwrap();

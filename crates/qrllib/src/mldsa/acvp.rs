@@ -98,6 +98,8 @@ fn public_key_from_secret_key(
     public_key
 }
 
+/// The directory of merged NIST ACVP vectors named by `ACVP_VECTORS_DIR`, if
+/// set.
 fn acvp_vectors_dir() -> Option<PathBuf> {
     env::var_os("ACVP_VECTORS_DIR").map(PathBuf::from)
 }
@@ -152,6 +154,8 @@ fn acvp_keygen_matches_nist_vectors() {
     }
 }
 
+/// Every NIST sigGen vector, deterministic and hedged, external and internal
+/// interface, reproduces the expected signature, which then verifies.
 #[test]
 fn acvp_siggen_matches_nist_vectors() {
     // Coverage: the coverage run always sets ACVP_VECTORS_DIR, so the skip
@@ -213,6 +217,8 @@ fn acvp_siggen_matches_nist_vectors() {
     }
 }
 
+/// Verification returns the NIST verdict for every sigVer vector on both the
+/// external and internal interfaces.
 #[test]
 fn acvp_sigver_matches_nist_vectors() {
     // Coverage: the coverage run always sets ACVP_VECTORS_DIR, so the skip
