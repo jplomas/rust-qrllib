@@ -16,6 +16,7 @@ both native and WebAssembly targets.
 | ML-DSA-87 | FIPS 204 | Signature | [`MlDsa87`] |
 | ML-KEM-1024 | FIPS 203 | KEM | [`DecapsulationKey`] / [`EncapsulationKey`] |
 | SPHINCS+-256s | pre-FIPS-205 submission | Signature | [`SphincsPlus256s`] |
+| Falcon-1024 | round-3 submission (pre-FIPS 206), bit for bit with the reference NIST API | Signature primitive (no wallet layer) | [`falcon1024::PrivateKey`] |
 | XMSS | Predates RFC 8391; **not** a standards-tracking implementation. Signatures are wire-compatible with the RFC 8391 reference only where the parameter sets overlap (`Sha2_256` / `Shake256`, via the `xmss::rfc8391` adapter); `Shake128` is a QRL-specific pre-standardisation variant with no RFC counterpart. Does not track NIST SP 800-208. | Stateful signature | [`Xmss`] |
 | Legacy XMSS | QRL v1 | Migration shim | [`LegacyXmssWallet`] |
 

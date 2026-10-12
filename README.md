@@ -6,7 +6,7 @@ Rust implementation of the Quantum Resistant Ledger cryptographic library, with 
 
 ## Overview
 
-`rust-qrllib` provides post-quantum signature schemes — plus an ML-KEM-1024 key-encapsulation primitive — and QRL wallet/address helpers for native Rust and WebAssembly consumers.
+`rust-qrllib` provides post-quantum signature schemes — plus an ML-KEM-1024 key-encapsulation primitive and a Falcon-1024 signature primitive — and QRL wallet/address helpers for native Rust and WebAssembly consumers.
 
 Supported algorithms:
 
@@ -14,6 +14,7 @@ Supported algorithms:
 |-----------|------|----------|----------|
 | ML-DSA-87 | Lattice-based | FIPS 204 | Primary stateless signature scheme |
 | ML-KEM-1024 | Lattice-based (KEM) | FIPS 203 | Key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
+| Falcon-1024 | Lattice-based (NTRU) | Falcon round-3 submission (pre-FIPS 206) — see Falcon notes | Signature primitive, `falcon1024`; standalone, not wallet-integrated |
 | SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path (issuance **and** verification) gated pending QRL's SLH-DSA parameter-set choice |
 | XMSS | Hash-based | Pre-standardisation; see XMSS notes | QRL v1 → v2 migration |
 
@@ -189,7 +190,7 @@ Low-level verification and sealed-message helpers:
 | `validate_mldsa_secret_key` | Length, then the s1/s2 encoding check every signing path applies (a 3-bit field of 5, 6 or 7 never comes from key generation and is rejected as `InvalidMlDsaSecretKeyEncoding`); for callers holding raw secret-key bytes |
 | `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context; takes a validated `mldsa::PublicKey`, never raw bytes |
 | `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (hedged by default per FIPS 204 §3.4 — TOB-QRLLIB-6) |
-| `sign_mldsa_with_secret_key_deterministic` | FIPS 204 §3.5 deterministic-mode opt-in (use for RANDAO-style protocols and KAT vector reproduction) |
+| `sign_mldsa_with_secret_key_deterministic` | FIPS 204 §3.4 deterministic-mode opt-in (use for RANDAO-style protocols and KAT vector reproduction) |
 | `open`, `extract_message`, `extract_signature` | ML-DSA-87 attached-signature helpers |
 | `verify_sphincsplus_signature` | Verify detached SPHINCS+ signatures |
 | `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ attached-signature helpers |
@@ -228,6 +229,50 @@ ML-KEM-1024 (FIPS 203) is a standalone key-encapsulation primitive — **not** a
 | `EncapsulationKey` | Public key: `from_bytes`, `encapsulate` (returns `(shared_key, ciphertext)`), `encapsulate_deterministic` (test-vector reproduction only), `bytes` |
 | `MLKEM1024_SEED_SIZE`, `MLKEM1024_SHARED_KEY_SIZE`, `MLKEM1024_CIPHERTEXT_SIZE`, `MLKEM1024_ENCAPSULATION_KEY_SIZE` | Size constants (64 / 32 / 1568 / 1568) |
 
+### Falcon-1024 (primitive; round-3, pre-FIPS 206)
+
+`qrllib::falcon1024` is a signature primitive with no wallet layer, ported
+from go-qrllib `crypto/falcon1024`. It implements the NIST round-3 submission
+bit for bit with the reference implementation's NIST API (`nist.c`), so keys
+and signatures are byte-identical to go-qrllib's and PQClean's; FIPS 206
+(FN-DSA) is still a draft and will differ in details, so key, signature and
+hashing formats may change when it is final. See [Falcon notes](#falcon-notes)
+and [SECURITY.md](SECURITY.md#falcon-1024-round-3-submission-pre-fips-206).
+
+```rust
+use qrllib::falcon1024::{self, PrivateKey, PublicKey};
+
+// A fresh key from OS randomness, or a deterministic one from a 48-byte seed
+// with PrivateKey::from_seed(&seed).
+let key = PrivateKey::generate()?;
+let public_key = key.public_key();
+
+// Signed message: the message travels inside the signature and `open`
+// returns it, as crypto_sign / crypto_sign_open do in the reference API.
+let message = b"The sleeper must awaken";
+let signed = key.sign(message)?;
+let opened = falcon1024::open(&public_key, &signed)?; // InvalidFalconSignature when tampered
+
+// Detached signature (at most FALCON_1024_MAX_SIGNATURE_SIZE bytes), verified
+// against a message you already hold. Exactly one encoding is accepted.
+let signature = key.sign_detached(message)?;
+let valid = falcon1024::verify(&public_key, message, &signature);
+
+// Keys received as bytes. PublicKey::from_bytes checks the encoding and
+// refuses weak keys; PrivateKey::from_bytes also checks the NTRU equation and
+// the key-generation bounds, so a key it accepts can always sign.
+let public_key = PublicKey::from_bytes(public_key.as_bytes())?; // FalconWeakPublicKey, InvalidFalconPublicKey*
+let key = PrivateKey::from_bytes(&key.to_bytes()?[..])?;          // InvalidFalconPrivateKey, FalconWeakPublicKey
+```
+
+| API | Purpose |
+|-----|---------|
+| `falcon1024::PrivateKey` (`Falcon1024PrivateKey`) | `generate`, `generate_with_rng`, `from_seed` (48 bytes), `from_bytes` (2,305-byte `CRYPTO_SECRETKEYBYTES` encoding), `to_bytes`, `public_key`, `sign` / `sign_with_rng` (signed message), `sign_detached` / `sign_detached_with_rng`, `zeroize` |
+| `falcon1024::PublicKey` (`Falcon1024PublicKey`) | `from_bytes` (1,793-byte `CRYPTO_PUBLICKEYBYTES` encoding, weak keys refused), `as_bytes`, `to_bytes` |
+| `falcon1024::open` (`falcon1024_open`), `falcon1024::verify` (`falcon1024_verify`) | Open a signed message; verify a detached signature |
+| `validate_falcon_public_key` | Encoding and weak-key check on raw bytes |
+| `falcon1024::RandomSource`, `falcon1024::OsRandom` | Randomness for key generation and signing: one call per `randombytes` call of the reference (48-byte key seed; 40-byte nonce, then 48-byte sampler seed per signature) |
+
 ### Common Types And Utilities
 
 | API | Purpose |
@@ -249,7 +294,7 @@ ML-KEM-1024 (FIPS 203) is a standalone key-encapsulation primitive — **not** a
 ML-DSA-87 is **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode and the TOB-QRLLIB-6 default (TOB-6 audit recommendation applied here for parity with `go-qrllib`):
 
 - **`sign` / `sign_attached`** (default) draw fresh `crypto/rand` randomness into the per-signature value on every call. Two signs of the same `(secret_key, [context,] message)` produce **distinct** signature bytes; both verify under the same public key. This frustrates fault-injection attacks against deterministic signing — an adversary who could differentiate two same-message signatures and recover `s1`/`s2` by lattice differential analysis no longer can. Verification is unchanged and existing verifiers are unaffected.
-- **`sign_deterministic` / `sign_attached_deterministic`** (FIPS 204 §3.5 opt-in) use a fixed all-zero per-signature value, so two signs of the same input yield byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT / cross-verification test-vector reproduction.
+- **`sign_deterministic` / `sign_attached_deterministic`** (FIPS 204 §3.4 opt-in) use a fixed all-zero per-signature value, so two signs of the same input yield byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT / cross-verification test-vector reproduction.
 
 SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; no explicit deterministic counterpart is needed.
 
@@ -259,7 +304,7 @@ SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; 
 |-------------|-------------|
 | General-purpose stateless signing, best performance | `MlDsa87` (hedged by default) |
 | QRL V2.0 wallet transactions | `MlDsa87Wallet` (descriptor-bound signing context) |
-| Deterministic signatures (e.g. RANDAO-style beacon contributions) | `MlDsa87::sign_deterministic` (FIPS 204 §3.5 opt-in) |
+| Deterministic signatures (e.g. RANDAO-style beacon contributions) | `MlDsa87::sign_deterministic` (FIPS 204 §3.4 opt-in) |
 | Maximum security, don't trust lattice assumptions | `SphincsPlus256s` raw primitive (wallet path gated, see SPHINCS+ notes) |
 | Legacy QRL v1 address compatibility | `LegacyXmssWallet` (with extreme care; see XMSS notes) |
 
@@ -270,6 +315,7 @@ Key and output sizes are fixed by each supported parameter set:
 | ML-DSA-87 | 32-byte seed; 4,896-byte encoded secret key | 2,592 bytes | 4,627-byte signature | n/a |
 | SPHINCS+-SHAKE-256s-robust | 96-byte seed; 128-byte encoded secret key | 64 bytes | 29,792-byte signature | n/a |
 | ML-KEM-1024 | 64-byte `d \|\| z` seed | 1,568 bytes | 1,568-byte ciphertext | 32 bytes |
+| Falcon-1024 | 48-byte seed; 2,305-byte encoded private key | 1,793 bytes | Detached ≤ 1,462 bytes (about 1,271 on average); a signed message adds ≤ 1,462 bytes | n/a |
 | XMSS | 48-byte QRL seed; 132-byte core secret state | 64-byte core public key | Variable by tree height | n/a |
 
 Use the exported `*_SIZE` constants rather than duplicating these values in
@@ -277,7 +323,7 @@ application code.
 
 ### Thread Safety
 
-ML-DSA-87 and SPHINCS+ signing methods take `&self`; immutable signer instances
+ML-DSA-87, SPHINCS+ and Falcon-1024 signing methods take `&self`; immutable signer instances
 may be shared using normal Rust synchronization and ownership rules. ML-KEM
 encapsulation and decapsulation are likewise non-mutating.
 
@@ -324,12 +370,33 @@ timeline, scope, and compatibility guarantees.
 
 The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is also **not verifiable** through the wallet layer — `WalletType::SphincsPlus256s.is_verifiable()` returns `false`, and `verify_sphincsplus_wallet_signature` returns `false` in a default build. No SPHINCS+ signatures have ever been produced on QRL networks, so refusing verification matches the on-chain reality (and go-qrllib's `wallettype.IsVerifiable`). For the same reason `Descriptor::is_valid()` rejects the SPHINCS+ descriptor, so `get_address` and `ExtendedSeed` refuse it too. Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need the SPHINCS+ wallet path locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`), which re-enables both construction and verification. For new wallets, use **`MlDsa87Wallet`**.
 
+### Falcon notes
+
+The implementation is **Falcon as submitted to round 3** of the NIST
+competition (specification v1.2), bit for bit with the reference
+implementation: the full round-3 KAT transcript (`falcon1024-KAT.rsp`) is
+rebuilt in the test suite and checked by its SHA-1, and CI compares keys,
+signed messages and detached signatures byte for byte with PQClean's
+`falcon-1024/clean` on amd64 and arm64. Signing uses native `f64`; Rust never
+contracts `a * b + c` into a fused multiply-add, so it rounds as the
+reference does on every target, wasm32 included. Detached signatures use the
+reference library's compressed format (header `0x3A`), the one PQClean and
+liboqs use; exactly one encoding is accepted, so the zero-padded
+falcon-padded-1024 form those verifiers also accept is rejected here, as in
+go-qrllib. Public keys under which anyone could forge (`h = a/c` for small
+`a` and `c`, including every constant and monomial key) are refused, with
+the rule and vectors shared with go-qrllib. There is no context string:
+callers that sign several kinds of data with one key must prefix their own
+domain separator. [FIPS 206](https://csrc.nist.gov/pubs/fips/206/ipd) (FN-DSA)
+is still a draft and is announced to differ from the submission.
+
 ### Standards and interoperability
 
 | Primitive | Alignment | Verification |
 |-----------|-----------|--------------|
 | ML-DSA-87 | FIPS 204 | NIST ACVP vectors plus cross-verification against pq-crystals and `go-qrllib` |
 | ML-KEM-1024 | FIPS 203 | NIST ACVP, C2SP/Wycheproof, C2SP/CCTV, and byte-for-byte `go-qrllib` cross-vectors |
+| Falcon-1024 | Falcon round-3 submission, before FIPS 206 | Round-3 KAT transcript digest, byte-for-byte bidirectional PQClean cross-verification, and the signature-encoding and weak-key vectors shared with `go-qrllib` |
 | SPHINCS+-SHAKE-256s-robust | SPHINCS+ submission, before FIPS 205 | Upstream reference cross-verification; intentionally not described as SLH-DSA |
 | XMSS | Pre-RFC QRL construction, closely aligned with RFC 8391 for overlapping `n=32` parameter sets | Bidirectional `XMSS-SHA2_10_256` reference cross-verification; OID/encoding adapters for the other supported RFC parameter sets |
 
@@ -338,11 +405,11 @@ The corresponding workflows and vector provenance live under `.github/acvp`,
 
 ### Keeping Secrets in Memory for the Minimum Time
 
-Every secret-bearing type (`Seed`, `ExtendedSeed`, `MlDsa87`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet`) implements `Drop` that zeroizes the backing buffer. You do not need to call `.zeroize()` explicitly for the happy-path — the value clears when it goes out of scope. Explicit `.zeroize()` remains available for long-lived signers that want to wipe their state mid-lifetime.
+Every secret-bearing type (`Seed`, `ExtendedSeed`, `MlDsa87`, `SphincsPlus256s`, `falcon1024::PrivateKey`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet`) implements `Drop` that zeroizes the backing buffer. You do not need to call `.zeroize()` explicitly for the happy-path — the value clears when it goes out of scope. Explicit `.zeroize()` remains available for long-lived signers that want to wipe their state mid-lifetime.
 
 Owned-secret accessors (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies also clear on drop.
 
-If, after an explicit `.zeroize()`, you call `sign` or `seal` on a still-reachable signer, the library returns `QrllibError::MlDsaSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized` rather than producing a bogus signature from the all-zero key.
+If, after an explicit `.zeroize()`, you call `sign` or `seal` on a still-reachable signer, the library returns `QrllibError::MlDsaSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `FalconSecretKeyZeroized` / `XmssSecretKeyZeroized` rather than producing a bogus signature from the all-zero key.
 
 ## WebAssembly API
 

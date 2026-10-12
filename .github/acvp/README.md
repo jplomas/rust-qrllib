@@ -10,7 +10,7 @@ The GitHub Action (`.github/workflows/acvp.yml`) clones the NIST ACVP-Server rep
 
 1. **Clone**: Sparse checkout of `github.com/usnistgov/ACVP-Server` (only the ML-DSA JSON files)
 2. **Merge**: `merge_vectors.py` combines the ACVP `prompt.json` (inputs) and `expectedResults.json` (expected outputs) into simplified test vector files, filtered to ML-DSA-87
-3. **Test**: the in-crate `mldsa::acvp` module (`crates/qrllib/src/mldsa/acvp.rs`) runs the vectors through Rust key generation and signing functions, comparing byte-exact output, and additionally checks that every NIST-generated public key passes `validate_mldsa_public_key` (validation must never reject an honest key)
+3. **Test**: the in-crate `mldsa::acvp` module (`crates/qrllib/src/mldsa/acvp.rs`) runs the vectors through Rust key generation, signing and verification functions, comparing byte-exact output and accept/reject verdicts, and additionally checks that every NIST-generated public key passes `validate_mldsa_public_key` (validation must never reject an honest key)
 
 **ML-KEM-1024:**
 
@@ -22,11 +22,14 @@ The GitHub Action (`.github/workflows/acvp.yml`) clones the NIST ACVP-Server rep
 | Test | Vectors | Description |
 |------|---------|-------------|
 | `mldsa::acvp::acvp_keygen_matches_nist_vectors` (ML-DSA-87) | 25 | Seed -> (pk, sk) matches NIST expected output; pk passes `validate_mldsa_public_key` |
-| `mldsa::acvp::acvp_siggen_matches_nist_vectors` (ML-DSA-87) | 15 | sk + message + context -> signature matches NIST expected output |
+| `mldsa::acvp::acvp_siggen_matches_nist_vectors` (ML-DSA-87) | 60 | sk + message (+ context) (+ rnd) -> signature matches NIST expected output and verifies |
+| `mldsa::acvp::acvp_sigver_matches_nist_vectors` (ML-DSA-87) | 30 | pk + message (+ context) + signature -> accept/reject matches NIST's verdict |
 | `acvp_keygen_matches_nist_vectors` (ML-KEM-1024) | 25 | seed (d‖z) -> (ek, expanded dk) matches NIST expected output |
 | `acvp_encap_decap_matches_nist_vectors` (ML-KEM-1024) | 55 | encapsulation (25), decapsulation (10), decapsulationKeyCheck (10), encapsulationKeyCheck (10) |
 
-Only deterministic, external-interface, pure (non-preHash) ML-DSA signature vectors are tested.
+ML-DSA signature vectors cover every group the implementation can serve: both the **deterministic** variant (`rnd` = 32 zero bytes) and the **hedged** variant with the `rnd` value NIST supplies, through both the **external** interface (`M' = 0x00 || |ctx| || ctx || M`) and the **internal** interface (`M'` as given). The **pre-hash** (HashML-DSA) and **external-mu** groups are skipped: the crate implements pure ML-DSA and computes mu itself, like the pq-crystals reference.
+
+The public ML-DSA-87 API is **hedged by default** per FIPS 204 §3.4 (TOB-QRLLIB-6), so it cannot reproduce a fixed vector byte for byte; the harness uses the crate-private `crypto_sign_signature_internal` / `crypto_sign_verify_internal` entry points, which the public paths call into, with the explicit `rnd` the vector prescribes. This matches go-qrllib's widened ACVP coverage.
 
 ## Running Locally
 
@@ -40,6 +43,8 @@ python3 .github/acvp/merge_vectors.py \
   --keygen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-keyGen-FIPS204/expectedResults.json \
   --siggen-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/prompt.json \
   --siggen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/expectedResults.json \
+  --sigver-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-sigVer-FIPS204/prompt.json \
+  --sigver-results /tmp/acvp-server/gen-val/json-files/ML-DSA-sigVer-FIPS204/expectedResults.json \
   --parameter-set ML-DSA-87 \
   --output-dir /tmp/acvp-vectors
 
@@ -76,7 +81,7 @@ MLKEM_ACVP_VECTORS_DIR=/tmp/acvp-server/gen-val/json-files \
 
 The NIST ACVP-Server stores vectors in two files per algorithm:
 
-- `prompt.json` — Test inputs (seed, message, sk, context)
-- `expectedResults.json` — Expected outputs (pk, sk, signature)
+- `prompt.json` — Test inputs (seed, message, sk, pk, context, rnd, signature)
+- `expectedResults.json` — Expected outputs (pk, sk, signature, testPassed)
 
 These are linked by `tcId` within test groups. `merge_vectors.py` joins them and filters to the requested parameter set.

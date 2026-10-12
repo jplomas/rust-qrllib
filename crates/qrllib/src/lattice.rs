@@ -1,5 +1,6 @@
 pub(crate) const N: usize = 256;
 pub(crate) const Q: i32 = 8_380_417;
+/// q^(-1) mod 2^32 (the reference `QINV`), used by `montgomery_reduce`.
 pub(crate) const Q_INV: i32 = 58_728_449;
 pub(crate) const D: i32 = 13;
 pub(crate) const GAMMA2: i32 = (Q - 1) / 32;

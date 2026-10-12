@@ -156,6 +156,55 @@ pub enum QrllibError {
         "unsupported XMSS parameter set OID 0x{0:08x}; only XMSS-SHA2_{{10,16,20}}_256 (0x01..0x03) and XMSS-SHAKE_{{10,16,20}}_256 (0x07..0x09) are accepted by the rfc8391 interop module"
     )]
     UnsupportedXmssParameterSet(u32),
+
+    #[error("invalid Falcon-1024 seed size {0}, expected {1}")]
+    InvalidFalconSeedSize(usize, usize),
+
+    #[error("invalid Falcon-1024 public key size {0}, expected {1}")]
+    InvalidFalconPublicKeySize(usize, usize),
+
+    /// A public key with a wrong header byte or a coefficient not below q
+    /// (go-qrllib `ErrInvalidPublicKey`).
+    #[error("invalid Falcon-1024 public key encoding")]
+    InvalidFalconPublicKeyEncoding,
+
+    /// Returned by [`crate::falcon1024::validate_falcon_public_key`] (and so
+    /// by every Falcon-1024 public-key and private-key constructor) for a
+    /// weak key: some integer multiple `multiplier * h`, `multiplier` in
+    /// `[1, 1024]`, is so short that anyone could sign under the key
+    /// (go-qrllib `ErrWeakPublicKey`).
+    #[error(
+        "Falcon-1024 public key is weak: {multiplier}*h has squared norm {squared_norm}, at most {bound} allowed"
+    )]
+    FalconWeakPublicKey { multiplier: u32, squared_norm: u64, bound: u64 },
+
+    #[error("invalid Falcon-1024 private key size {0}, expected {1}")]
+    InvalidFalconPrivateKeySize(usize, usize),
+
+    /// A private key that is malformed (header byte, a coefficient outside
+    /// its field), whose G cannot be recomputed, which fails the NTRU
+    /// equation f*G - g*F = q, or whose (f, g) is outside the key-generation
+    /// bounds (go-qrllib `ErrInvalidSecretKey`).
+    #[error("invalid Falcon-1024 private key")]
+    InvalidFalconPrivateKey,
+
+    /// A detached signature or signed message shorter than its fixed prefix
+    /// (go-qrllib `ErrInvalidSignatureSize`).
+    #[error("Falcon-1024 signature shorter than {0} bytes")]
+    FalconSignatureTooShort(usize),
+
+    /// A malformed signature, or one that does not verify (go-qrllib
+    /// `ErrInvalidSignature`).
+    #[error("invalid Falcon-1024 signature")]
+    InvalidFalconSignature,
+
+    /// The signing attempt or sampler budget ran out, or the signature did
+    /// not fit its encoding (go-qrllib `ErrSigningFailed`).
+    #[error("Falcon-1024 signing failed")]
+    FalconSigningFailed,
+
+    #[error("Falcon-1024 secret key is zeroized")]
+    FalconSecretKeyZeroized,
 }
 
 pub type Result<T> = core::result::Result<T, QrllibError>;

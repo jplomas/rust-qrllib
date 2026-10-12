@@ -1,6 +1,7 @@
 pub mod address;
 pub mod descriptor;
 pub mod error;
+pub mod falcon1024;
 mod lattice;
 pub mod legacy_xmss;
 pub mod mldsa;
@@ -20,6 +21,12 @@ pub use address::{
 };
 pub use descriptor::Descriptor;
 pub use error::{QrllibError, Result};
+pub use falcon1024::{
+    FALCON_1024_MAX_SIGNATURE_SIZE, FALCON_1024_MAX_SIGNED_MESSAGE_OVERHEAD,
+    FALCON_1024_PRIVATE_KEY_SIZE, FALCON_1024_PUBLIC_KEY_SIZE, FALCON_1024_SEED_SIZE,
+    PrivateKey as Falcon1024PrivateKey, PublicKey as Falcon1024PublicKey, open as falcon1024_open,
+    validate_falcon_public_key, verify as falcon1024_verify,
+};
 pub use legacy_xmss::{
     LEGACY_XMSS_ADDRESS_SIZE, LEGACY_XMSS_DESCRIPTOR_SIZE, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE,
     LEGACY_XMSS_EXTENDED_SEED_SIZE, LEGACY_XMSS_SEED_SIZE, LegacyAddrFormatType, LegacyWalletType,

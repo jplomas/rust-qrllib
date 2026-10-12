@@ -82,6 +82,7 @@ jobs:
           git sparse-checkout set \
             gen-val/json-files/ML-DSA-keyGen-FIPS204 \
             gen-val/json-files/ML-DSA-sigGen-FIPS204 \
+            gen-val/json-files/ML-DSA-sigVer-FIPS204 \
             gen-val/json-files/ML-KEM-keyGen-FIPS203 \
             gen-val/json-files/ML-KEM-encapDecap-FIPS203
           git fetch --depth 1 --filter=blob:none origin "$ACVP_REF"
@@ -94,6 +95,8 @@ jobs:
             --keygen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-keyGen-FIPS204/expectedResults.json \
             --siggen-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/prompt.json \
             --siggen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/expectedResults.json \
+            --sigver-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-sigVer-FIPS204/prompt.json \
+            --sigver-results /tmp/acvp-server/gen-val/json-files/ML-DSA-sigVer-FIPS204/expectedResults.json \
             --parameter-set ML-DSA-87 \
             --output-dir /tmp/acvp-vectors
 

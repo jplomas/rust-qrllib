@@ -1,0 +1,263 @@
+/*
+ * falcon1024_crossverify_ref.c - Cross-verify rust-qrllib Falcon-1024 against
+ * PQClean's falcon-1024 "clean" implementation (the round-3 reference code).
+ *
+ * Compile from the PQClean checkout root, without common/randombytes.c:
+ *   gcc -std=c99 -O2 -Icrypto_sign/falcon-1024/clean -Icommon \
+ *       falcon1024_crossverify_ref.c \
+ *       crypto_sign/falcon-1024/clean/codec.c crypto_sign/falcon-1024/clean/common.c \
+ *       crypto_sign/falcon-1024/clean/fft.c crypto_sign/falcon-1024/clean/fpr.c \
+ *       crypto_sign/falcon-1024/clean/keygen.c crypto_sign/falcon-1024/clean/pqclean.c \
+ *       crypto_sign/falcon-1024/clean/rng.c crypto_sign/falcon-1024/clean/sign.c \
+ *       crypto_sign/falcon-1024/clean/vrfy.c common/fips202.c
+ *
+ * randombytes() is defined here as a SHAKE256 stream over a fixed label, the
+ * same stream the Rust example (examples/falcon1024_crossverify.rs) draws from, so the
+ * two implementations must produce byte-identical keys and signatures.
+ *
+ * Usage: falcon1024_ref <rust-qrllib file> <output file>
+ *   1. Reads the rust-qrllib file, regenerates every entry from the same stream,
+ *      compares byte for byte, and opens/verifies rust-qrllib's outputs.
+ *   2. Generates its own entries from the second stream into the output file
+ *      for rust-qrllib to regenerate, compare, open and verify.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#include "api.h"
+#include "fips202.h"
+#include "randombytes.h"
+
+#define ENTRIES   8
+#define PK_LEN    PQCLEAN_FALCON1024_CLEAN_CRYPTO_PUBLICKEYBYTES
+#define SK_LEN    PQCLEAN_FALCON1024_CLEAN_CRYPTO_SECRETKEYBYTES
+#define SIG_MAX   PQCLEAN_FALCON1024_CLEAN_CRYPTO_BYTES
+#define MSG_MAX   (33 * ENTRIES)
+#define NONCE_LEN 40
+
+static const char LABEL_RUST[]  = "rust-qrllib Falcon-1024 cross-verification: rust-qrllib generates";
+static const char LABEL_REF[] = "rust-qrllib Falcon-1024 cross-verification: PQClean generates";
+
+/* Deterministic randombytes() over SHAKE256(label), replacing common/randombytes.c. */
+static shake256incctx drbg;
+
+/* Squeezes the next n bytes of the stream drbg_seed started. */
+int randombytes(uint8_t *output, size_t n) {
+    shake256_inc_squeeze(output, n, &drbg);
+    return 0;
+}
+
+/* Restarts the randombytes() stream as SHAKE256(label). */
+static void drbg_seed(const char *label) {
+    shake256_inc_init(&drbg);
+    shake256_inc_absorb(&drbg, (const uint8_t *)label, strlen(label));
+    shake256_inc_finalize(&drbg);
+}
+
+typedef struct {
+    uint8_t pk[PK_LEN];
+    uint8_t sk[SK_LEN];
+    uint8_t msg[MSG_MAX];
+    size_t msglen;
+    uint8_t sm[MSG_MAX + SIG_MAX];
+    size_t smlen;
+    uint8_t sig[SIG_MAX];
+    size_t siglen;
+} entry;
+
+/* Reports a failure for entry i and returns 1. */
+static int fail(const char *what, int i) {
+    printf("FAIL: entry %d: %s\n", i, what);
+    return 1;
+}
+
+/* Generates ENTRIES entries from the current stream, self-verifying each. */
+static int generate(entry *es) {
+    for (int i = 0; i < ENTRIES; i++) {
+        entry *e = &es[i];
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_keypair(e->pk, e->sk) != 0) {
+            return fail("crypto_sign_keypair failed", i);
+        }
+        e->msglen = 33 * (size_t)(i + 1);
+        randombytes(e->msg, e->msglen);
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign(e->sm, &e->smlen, e->msg, e->msglen, e->sk) != 0) {
+            return fail("crypto_sign failed", i);
+        }
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_signature(e->sig, &e->siglen, e->msg, e->msglen, e->sk) != 0) {
+            return fail("crypto_sign_signature failed", i);
+        }
+        uint8_t m[MSG_MAX];
+        size_t mlen;
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_open(m, &mlen, e->sm, e->smlen, e->pk) != 0
+                || mlen != e->msglen || memcmp(m, e->msg, mlen) != 0) {
+            return fail("self-check of the signed message failed", i);
+        }
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_verify(e->sig, e->siglen, e->msg, e->msglen, e->pk) != 0) {
+            return fail("self-check of the detached signature failed", i);
+        }
+    }
+    return 0;
+}
+
+/* Writes p as a field: its length as a big-endian u32, then the bytes. */
+static int write_field(FILE *f, const uint8_t *p, size_t n) {
+    uint8_t len[4] = { (uint8_t)(n >> 24), (uint8_t)(n >> 16), (uint8_t)(n >> 8), (uint8_t)n };
+    return fwrite(len, 1, 4, f) == 4 && fwrite(p, 1, n, f) == n ? 0 : 1;
+}
+
+/* Reads a field written by write_field, refusing one longer than max. */
+static int read_field(FILE *f, uint8_t *p, size_t max, size_t *n) {
+    uint8_t len[4];
+    if (fread(len, 1, 4, f) != 4) {
+        return 1;
+    }
+    *n = ((size_t)len[0] << 24) | ((size_t)len[1] << 16) | ((size_t)len[2] << 8) | (size_t)len[3];
+    if (*n > max) {
+        return 1;
+    }
+    return fread(p, 1, *n, f) == *n ? 0 : 1;
+}
+
+/* Writes ENTRIES entries to path, field by field. */
+static int write_entries(const char *path, const entry *es) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        printf("FAIL: cannot write %s\n", path);
+        return 1;
+    }
+    for (int i = 0; i < ENTRIES; i++) {
+        const entry *e = &es[i];
+        if (write_field(f, e->pk, PK_LEN) || write_field(f, e->sk, SK_LEN)
+                || write_field(f, e->msg, e->msglen) || write_field(f, e->sm, e->smlen)
+                || write_field(f, e->sig, e->siglen)) {
+            fclose(f);
+            printf("FAIL: cannot write %s\n", path);
+            return 1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Reads ENTRIES entries from path, refusing wrong key sizes and oversize fields. */
+static int read_entries(const char *path, entry *es) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        printf("FAIL: cannot read %s\n", path);
+        return 1;
+    }
+    for (int i = 0; i < ENTRIES; i++) {
+        entry *e = &es[i];
+        size_t n;
+        if (read_field(f, e->pk, PK_LEN, &n) || n != PK_LEN
+                || read_field(f, e->sk, SK_LEN, &n) || n != SK_LEN
+                || read_field(f, e->msg, MSG_MAX, &e->msglen)
+                || read_field(f, e->sm, sizeof e->sm, &e->smlen)
+                || read_field(f, e->sig, SIG_MAX, &e->siglen)) {
+            fclose(f);
+            printf("FAIL: malformed %s\n", path);
+            return 1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Regenerates rust-qrllib's entries from its stream and compares byte for byte. */
+static int check(const entry *theirs) {
+    static entry ours[ENTRIES];
+    drbg_seed(LABEL_RUST);
+    if (generate(ours)) {
+        return 1;
+    }
+    for (int i = 0; i < ENTRIES; i++) {
+        const entry *a = &ours[i], *b = &theirs[i];
+        if (memcmp(a->pk, b->pk, PK_LEN) != 0) {
+            return fail("public key differs from rust-qrllib's", i);
+        }
+        if (memcmp(a->sk, b->sk, SK_LEN) != 0) {
+            return fail("private key differs from rust-qrllib's", i);
+        }
+        if (a->msglen != b->msglen || memcmp(a->msg, b->msg, a->msglen) != 0) {
+            return fail("message differs from rust-qrllib's", i);
+        }
+        if (a->smlen != b->smlen || memcmp(a->sm, b->sm, a->smlen) != 0) {
+            return fail("signed message differs from rust-qrllib's", i);
+        }
+        if (a->siglen != b->siglen || memcmp(a->sig, b->sig, a->siglen) != 0) {
+            return fail("detached signature differs from rust-qrllib's", i);
+        }
+
+        uint8_t m[MSG_MAX];
+        size_t mlen;
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_open(m, &mlen, b->sm, b->smlen, b->pk) != 0
+                || mlen != b->msglen || memcmp(m, b->msg, mlen) != 0) {
+            return fail("crypto_sign_open rejected rust-qrllib's signed message", i);
+        }
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_verify(b->sig, b->siglen, b->msg, b->msglen, b->pk) != 0) {
+            return fail("crypto_sign_verify rejected rust-qrllib's detached signature", i);
+        }
+        uint8_t tampered[MSG_MAX];
+        memcpy(tampered, b->msg, b->msglen);
+        tampered[0] ^= 1;
+        if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_verify(b->sig, b->siglen, tampered, b->msglen, b->pk) == 0) {
+            return fail("crypto_sign_verify accepted rust-qrllib's signature for a different message", i);
+        }
+
+        /* PQClean also accepts the compressed signature zero-padded to the
+         * falcon-padded-1024 length (pqclean.c, do_verify), in both formats;
+         * rust-qrllib does not (its harness checks the rejection). Both
+         * behaviours are pinned so that a change on either side is noticed. */
+        if (b->siglen < PQCLEAN_FALCONPADDED1024_CLEAN_CRYPTO_BYTES) {
+            uint8_t padded[PQCLEAN_FALCONPADDED1024_CLEAN_CRYPTO_BYTES];
+            memset(padded, 0, sizeof padded);
+            memcpy(padded, b->sig, b->siglen);
+            if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_verify(padded, sizeof padded, b->msg, b->msglen, b->pk) != 0) {
+                return fail("crypto_sign_verify rejected the zero-padded detached form it is documented to accept", i);
+            }
+        }
+        /* The signed message's own signature field (1 + compressed body) says
+         * how much zero padding brings its body to the padded length too. */
+        size_t smsiglen = ((size_t)b->sm[0] << 8) | b->sm[1];
+        if (smsiglen + NONCE_LEN < PQCLEAN_FALCONPADDED1024_CLEAN_CRYPTO_BYTES) {
+            size_t pad = PQCLEAN_FALCONPADDED1024_CLEAN_CRYPTO_BYTES - NONCE_LEN - smsiglen;
+            uint8_t smpadded[MSG_MAX + SIG_MAX + PQCLEAN_FALCONPADDED1024_CLEAN_CRYPTO_BYTES];
+            memcpy(smpadded, b->sm, b->smlen);
+            memset(smpadded + b->smlen, 0, pad);
+            smpadded[0] = (uint8_t)((smsiglen + pad) >> 8);
+            smpadded[1] = (uint8_t)(smsiglen + pad);
+            if (PQCLEAN_FALCON1024_CLEAN_crypto_sign_open(m, &mlen, smpadded, b->smlen + pad, b->pk) != 0
+                    || mlen != b->msglen || memcmp(m, b->msg, mlen) != 0) {
+                return fail("crypto_sign_open rejected the zero-padded signed message it is documented to accept", i);
+            }
+        }
+    }
+    return 0;
+}
+
+/* Checks the rust-qrllib file, then writes this side's entries for rust-qrllib. */
+int main(int argc, char **argv) {
+    static entry theirs[ENTRIES], ours[ENTRIES];
+    if (argc != 3) {
+        printf("usage: falcon1024_ref <rust-qrllib file> <output file>\n");
+        return 2;
+    }
+
+    if (read_entries(argv[1], theirs) || check(theirs)) {
+        return 1;
+    }
+    printf("PQClean falcon-1024 <- rust-qrllib: %d entries PASSED\n", ENTRIES);
+    printf("  - same stream -> identical public key, private key, signed message and detached signature\n");
+    printf("  - rust-qrllib signed message opens under PQClean\n");
+    printf("  - rust-qrllib detached signature verifies under PQClean, and not for a different message\n");
+    printf("  - PQClean accepts the zero-padded (falcon-padded-1024 length) forms; rust-qrllib's harness checks it rejects them\n");
+
+    drbg_seed(LABEL_REF);
+    if (generate(ours) || write_entries(argv[2], ours)) {
+        return 1;
+    }
+    printf("PQClean falcon-1024: wrote %d entries to %s\n", ENTRIES, argv[2]);
+    return 0;
+}
